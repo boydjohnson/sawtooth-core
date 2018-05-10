@@ -1,0 +1,113 @@
+# Copyright 2017 Intel Corporation
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ------------------------------------------------------------------------------
+
+version: "2.1"
+
+services:
+
+  test-devmode-engine-liveness:
+    image: sawtooth-dev-python:$ISOLATION_ID
+    volumes:
+      - $SAWTOOTH_CORE:/project/sawtooth-core
+    command: nose2-3
+        -c /project/sawtooth-core/integration/sawtooth_integration/nose2.cfg
+        -vvvv
+        -s /project/sawtooth-core/integration/sawtooth_integration/tests
+        test_devmode_engine_liveness
+    expose:
+      - 8008
+    stop_signal: SIGKILL
+    environment:
+      PYTHONPATH: "/project/sawtooth-core/sdk/python:\
+        /project/sawtooth-core/integration:\
+        /project/sawtooth-core/signing:\
+        /project/sawtooth-core/cli"
+
+  intkey-workload:
+    image: sawtooth-dev-python:$ISOLATION_ID
+    volumes:
+      - $SAWTOOTH_CORE:/project/sawtooth-core
+    expose:
+      - 8008
+    command: "bash -c \"\
+      while true; do curl -s http://rest-api-0:8008/state | grep -q head; if [ $$? -eq 0 ]; then break; fi; sleep 0.5; done; \
+      intkey workload --rate 1 --display-frequency 15 --urls http://rest-api-0:8008,http://rest-api-1:8008,http://rest-api-2:8008,http://rest-api-3:8008,http://rest-api-4:8008 \
+      \""
+    stop_signal: SIGKILL
+    environment:
+      PYTHONPATH: "/project/sawtooth-core/sdk/python:\
+        /project/sawtooth-core/sdk/examples/intkey_python:\
+        /project/sawtooth-core/integration:\
+        /project/sawtooth-core/signing:\
+        /project/sawtooth-core/cli"
+
+  devmode-engine-0:
+    image: sawtooth-dev-rust:$ISOLATION_ID
+    volumes:
+      - $SAWTOOTH_CORE:/project/sawtooth-core
+    command: devmode-rust --connect tcp://validator-0:5005 -vv
+    stop_signal: SIGKILL
+
+  validator-0:
+    image: sawtooth-validator:$ISOLATION_ID
+    volumes:
+      - $SAWTOOTH_CORE:/project/sawtooth-core
+    expose:
+      - 4004
+      - 5005
+      - 8800
+    working_dir: /root
+    command: "bash -c \"\
+        sawadm keygen --force && \
+        sawset genesis \
+          -k /etc/sawtooth/keys/validator.priv \
+          -o config-genesis.batch && \
+        sawset proposal create \
+          -k /etc/sawtooth/keys/validator.priv \
+          sawtooth.consensus.algorithm=None \
+          -o config.batch && \
+        sawadm genesis \
+          config-genesis.batch config.batch && \
+        sawtooth-validator -v --bind consensus:tcp://eth0:5005
+    \""
+    stop_signal: SIGKILL
+
+  rest-api-0:
+    image: sawtooth-rest-api:$ISOLATION_ID
+    volumes:
+      - $SAWTOOTH_CORE:/project/sawtooth-core
+    expose:
+      - 4004
+      - 8008
+    command: sawtooth-rest-api --connect tcp://validator-0:4004 --bind rest-api-0:8008
+    stop_signal: SIGKILL
+
+  intkey-tp-0:
+    image: sawtooth-intkey-tp-go:$ISOLATION_ID
+    volumes:
+      - $SAWTOOTH_CORE:/project/sawtooth-core
+    expose:
+      - 4004
+    command: intkey-tp-go -C tcp://validator-0:4004 --max-queue-size 1024 --worker-thread-count 32
+    stop_signal: SIGKILL
+
+  settings-tp-0:
+    image: sawtooth-settings-tp:$ISOLATION_ID
+    volumes:
+      - $SAWTOOTH_CORE:/project/sawtooth-core
+    expose:
+      - 4004
+    command: settings-tp -C tcp://validator-0:4004
+    stop_signal: SIGKILL
