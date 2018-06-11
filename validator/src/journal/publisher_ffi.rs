@@ -23,7 +23,7 @@ use cpython::{PyClone, PyList, PyObject, Python};
 
 use batch::Batch;
 use journal::block_wrapper::BlockWrapper;
-use journal::publisher::{BlockPublisher, IncomingBatchSender};
+use journal::publisher::{BlockPublisher, IncomingBatchSender, InitializeBlockError};
 
 #[repr(u32)]
 #[derive(Debug)]
@@ -31,6 +31,7 @@ pub enum ErrorCode {
     Success = 0,
     NullPointerProvided = 0x01,
     InvalidInput = 0x02,
+    BlockInProgress = 0x03,
 }
 
 macro_rules! check_null {
@@ -239,6 +240,25 @@ pub extern "C" fn block_publisher_pending_batch_info(
         *limit = info.1;
     }
     ErrorCode::Success
+}
+
+#[no_mangle]
+pub extern "C" fn block_publisher_initialize_block(
+    publisher: *mut c_void,
+    previous_block: *mut py_ffi::PyObject,
+) -> ErrorCode {
+    let gil = Python::acquire_gil();
+    let py = gil.python();
+    let block = unsafe {
+        PyObject::from_borrowed_ptr(py, previous_block)
+            .extract::<BlockWrapper>(py)
+            .unwrap()
+    };
+
+    match unsafe { (*(publisher as *mut BlockPublisher)).initialize_block(block) } {
+        Err(InitializeBlockError::BlockInProgress) => ErrorCode::Success,
+        Ok(_) => ErrorCode::Success,
+    }
 }
 
 #[no_mangle]

@@ -512,6 +512,14 @@ impl BlockPublisher {
         self.batch_tx.clone()
     }
 
+    pub fn initialize_block(
+        &self,
+        previous_block: BlockWrapper,
+    ) -> Result<(), InitializeBlockError> {
+        let mut state = self.publisher.state.write().expect("RwLock was poisoned");
+        self.publisher.initialize_block(&mut state, &previous_block)
+    }
+
     pub fn pending_batch_info(&self) -> (i32, i32) {
         let state = self.publisher
             .state
