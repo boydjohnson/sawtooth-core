@@ -299,11 +299,12 @@ impl SyncBlockPublisher {
     fn finalize_block(
         &self,
         state: &mut BlockPublisherState,
+        consensus_data: Vec<u8>,
         force: bool,
     ) -> Result<FinalizeBlockResult, FinalizeBlockError> {
         let mut option_result = None;
         if let Some(ref mut candidate_block) = &mut state.candidate_block {
-            option_result = Some(candidate_block.finalize(force));
+            option_result = Some(candidate_block.finalize(consensus_data, force));
         }
 
         if let Some(result) = option_result {
@@ -320,6 +321,28 @@ impl SyncBlockPublisher {
             }
         } else {
             Err(FinalizeBlockError::BlockNotInitialized)
+        }
+    }
+
+    fn summarize_block(
+        &self,
+        state: &mut BlockPublisherState,
+        force: bool
+    ) -> Result<Option<String>, FinalizeBlockError> {
+        match state.candidate_block {
+            None => Err(FinalizeBlockError::BlockNotInitialized),
+            Some(ref mut candidate_block) => {
+                match candidate_block.summarize(force) {
+                    Ok(summary) => {
+                        if summary.is_none() {
+
+                        }
+                        Ok(summary)
+                    },
+                    Err(CandidateBlockError::BlockEmpty) => Err(FinalizeBlockError::BlockEmpty),
+                }
+
+            }
         }
     }
 
@@ -518,6 +541,16 @@ impl BlockPublisher {
     ) -> Result<(), InitializeBlockError> {
         let mut state = self.publisher.state.write().expect("RwLock was poisoned");
         self.publisher.initialize_block(&mut state, &previous_block)
+    }
+
+    pub fn finalize_block(
+        &self,
+        consensus_data: Vec<u8>,
+        force: bool,
+    ) -> Result<FinalizeBlockResult, FinalizeBlockError> {
+        let mut state = self.publisher.state.write().expect("RwLock is poisoned");
+        self.publisher
+            .finalize_block(&mut state, consensus_data, force)
     }
 
     pub fn pending_batch_info(&self) -> (i32, i32) {

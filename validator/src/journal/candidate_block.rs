@@ -23,6 +23,9 @@ use cpython::PyClone;
 use cpython::Python;
 use cpython::ToPyObject;
 
+use crypto::digest::Digest;
+use crypto::sha2::Sha256;
+
 use batch::Batch;
 use transaction::Transaction;
 
@@ -52,6 +55,8 @@ pub struct CandidateBlock {
     identity_signer: cpython::PyObject,
     settings_view: cpython::PyObject,
 
+    summary: Option<String>,
+
     pending_batches: Vec<Batch>,
     pending_batch_ids: HashSet<String>,
     injected_batch_ids: HashSet<String>,
@@ -79,6 +84,7 @@ impl CandidateBlock {
             batch_injectors,
             identity_signer,
             settings_view,
+            summary: None,
             pending_batches: vec![],
             pending_batch_ids: HashSet::new(),
             injected_batch_ids: HashSet::new(),
@@ -328,7 +334,7 @@ impl CandidateBlock {
             .expect("BlockBuilder has no method 'set_signature'");
     }
 
-    pub fn finalize(&mut self, force: bool) -> Result<FinalizeBlockResult, CandidateBlockError> {
+    pub fn summarize(&mut self, force: bool) -> Result<Option<String>, CandidateBlockError> {
         if !(force || !self.pending_batches.is_empty()) {
             return Err(CandidateBlockError::BlockEmpty);
         }
@@ -398,7 +404,7 @@ impl CandidateBlock {
                         .into_iter()
                         .filter(|b| !bad_batches.contains(b))
                         .collect());
-                    return self.build_result(None, pending_batches);
+                    return Ok(None);
                 } else {
                     let gil = Python::acquire_gil();
                     let py = gil.python();
@@ -414,7 +420,7 @@ impl CandidateBlock {
         }
         if execution_results.ending_state_hash.is_none() || self.no_batches_added(&builder) {
             debug!("Abandoning block, no batches added");
-            return self.build_result(None, pending_batches);
+            return Ok(None);
         }
 
         let gil = cpython::Python::acquire_gil();
@@ -427,16 +433,47 @@ impl CandidateBlock {
                 None,
             )
             .expect("BlockBuilder has no method 'set_state_hash'");
-        self.sign_block(&builder);
 
-        self.build_result(
-            Some(
-                builder
-                    .call_method(py, "build_block", cpython::NoArgs, None)
-                    .expect("BlockBuilder has no method 'build_block'"),
-            ),
-            pending_batches,
-        )
+        let mut hasher = Sha256::new();
+
+        for batch in builder
+            .getattr(py, "batches")
+            .expect("BlockBuilder has no attribute 'batches'")
+            .extract::<Vec<Batch>>(py)
+            .expect("Unable to extract PyList of Batches as Vec<Batch>")
+        {
+            hasher.input_str(&batch.header_signature);
+        }
+        self.summary = Some(hasher.result_str());
+        Ok(self.summary.clone())
+    }
+
+    pub fn finalize(
+        &mut self,
+        consensus_data: Vec<u8>,
+        force: bool,
+    ) -> Result<FinalizeBlockResult, CandidateBlockError> {
+        let summary = self.summarize(force)?;
+        if summary.is_none() {
+            return self.build_result(None);
+        }
+
+        let builder = &self.block_builder;
+        let gil = cpython::Python::acquire_gil();
+        let py = gil.python();
+        builder
+            .getattr(py, "block_header")
+            .expect("BlockBuilder has no attribute 'block_header'")
+            .setattr(py, "consensus", consensus_data.as_slice())
+            .expect("BlockHeader has no attribute 'consensus'");
+
+        self.sign_block(builder);
+
+        self.build_result(Some(
+            builder
+                .call_method(py, "build_block", cpython::NoArgs, None)
+                .expect("BlockBuilder has no method 'build_block'"),
+        ))
     }
 
     fn no_batches_added(&self, builder: &cpython::PyObject) -> bool {
@@ -453,12 +490,11 @@ impl CandidateBlock {
     fn build_result(
         &self,
         block: Option<cpython::PyObject>,
-        remaining: Vec<Batch>,
     ) -> Result<FinalizeBlockResult, CandidateBlockError> {
         if let Some(last_batch) = self.last_batch().cloned() {
             Ok(FinalizeBlockResult {
                 block,
-                remaining_batches: remaining,
+                remaining_batches: self.pending_batches.clone(),
                 last_batch,
                 injected_batch_ids: self.injected_batch_ids
                     .clone()
