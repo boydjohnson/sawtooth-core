@@ -333,6 +333,18 @@ impl SyncBlockPublisher {
         }
     }
 
+    fn restart_block(&self, state: &mut BlockPublisherState) -> Result<String, FinalizeBlockError> {
+        let previous_block = self.block_cache
+            .get_item(py, state.candidate_block.previous_block_id.as_str())
+            .expect("BlockCache has not implemented __get_item__")
+            .extract::<BlockWrapper>(py)
+            .expect("Unable to extract BlockWrapper");
+        state.candidate_block = None;
+        self.initialize_block(previous_block)
+            .map_err(|_| warn!("Failed to initialize block during restart"));
+        Err(FinalizeBlockError::BlockEmpty)
+    }
+
     fn summarize_block(
         &self,
         state: &mut BlockPublisherState,
