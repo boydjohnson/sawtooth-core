@@ -348,22 +348,17 @@ impl SyncBlockPublisher {
     fn summarize_block(
         &self,
         state: &mut BlockPublisherState,
-        force: bool
+        force: bool,
     ) -> Result<Option<String>, FinalizeBlockError> {
         match state.candidate_block {
             None => Err(FinalizeBlockError::BlockNotInitialized),
-            Some(ref mut candidate_block) => {
-                match candidate_block.summarize(force) {
-                    Ok(summary) => {
-                        if summary.is_none() {
-
-                        }
-                        Ok(summary)
-                    },
-                    Err(CandidateBlockError::BlockEmpty) => Err(FinalizeBlockError::BlockEmpty),
+            Some(ref mut candidate_block) => match candidate_block.summarize(force) {
+                Ok(summary) => {
+                    if summary.is_none() {}
+                    Ok(summary)
                 }
-
-            }
+                Err(CandidateBlockError::BlockEmpty) => Err(FinalizeBlockError::BlockEmpty),
+            },
         }
     }
 
