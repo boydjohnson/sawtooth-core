@@ -301,7 +301,7 @@ impl SyncBlockPublisher {
         state: &mut BlockPublisherState,
         consensus_data: Vec<u8>,
         force: bool,
-    ) -> Result<FinalizeBlockResult, FinalizeBlockError> {
+    ) -> Result<String, FinalizeBlockError> {
         let mut option_result = None;
         if let Some(ref mut candidate_block) = &mut state.candidate_block {
             option_result = Some(candidate_block.finalize(consensus_data, force));
@@ -315,7 +315,16 @@ impl SyncBlockPublisher {
                         finalize_result.last_batch.clone(),
                     );
                     state.candidate_block = None;
-                    Ok(finalize_result)
+                    match finalize_result.block {
+                        Some(block) => {}
+                        None => {}
+                    }
+
+                    Ok(self.publish_block(
+                        state,
+                        finalize_result.block,
+                        finalize_result.injected_batches_ids,
+                    ))
                 }
                 Err(err) => Err(FinalizeBlockError::BlockNotInitialized),
             }
@@ -351,7 +360,7 @@ impl SyncBlockPublisher {
         state: &mut BlockPublisherState,
         block: PyObject,
         injected_batches: Vec<String>,
-    ) {
+    ) -> String {
         let gil = Python::acquire_gil();
         let py = gil.python();
         let block: Block = block
@@ -370,7 +379,7 @@ impl SyncBlockPublisher {
             COLLECTOR.counter("BlockPublisher.blocks_published_count", None, None);
         blocks_published_count.inc();
 
-        self.on_chain_updated(state, None, Vec::new(), Vec::new());
+        block.header_signature
     }
 
     fn get_public_key(&self, py: Python) -> String {
