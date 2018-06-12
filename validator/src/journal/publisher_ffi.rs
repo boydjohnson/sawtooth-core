@@ -17,13 +17,15 @@
 use py_ffi;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
+use std::slice;
 use std::time::Duration;
 
 use cpython::{PyClone, PyList, PyObject, Python};
 
 use batch::Batch;
 use journal::block_wrapper::BlockWrapper;
-use journal::publisher::{BlockPublisher, IncomingBatchSender, InitializeBlockError};
+use journal::publisher::{BlockPublisher, FinalizeBlockError, IncomingBatchSender,
+                         InitializeBlockError};
 
 #[repr(u32)]
 #[derive(Debug)]
@@ -32,6 +34,8 @@ pub enum ErrorCode {
     NullPointerProvided = 0x01,
     InvalidInput = 0x02,
     BlockInProgress = 0x03,
+    BlockNotInitialized = 0x04,
+    BlockEmpty = 0x05,
 }
 
 macro_rules! check_null {
@@ -258,6 +262,48 @@ pub extern "C" fn block_publisher_initialize_block(
     match unsafe { (*(publisher as *mut BlockPublisher)).initialize_block(block) } {
         Err(InitializeBlockError::BlockInProgress) => ErrorCode::Success,
         Ok(_) => ErrorCode::Success,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn block_publisher_finalize_block(
+    publisher: *mut c_void,
+    consensus: *const u8,
+    consensus_len: usize,
+    force: bool,
+    result: *mut *const u8,
+    result_len: *mut usize,
+) -> ErrorCode {
+    check_null!(publisher, consensus);
+    let consensus = unsafe { slice::from_raw_parts(consensus, consensus_len).to_vec() };
+    match unsafe { (*(publisher as *mut BlockPublisher)).finalize_block(consensus, force) } {
+        Err(FinalizeBlockError::BlockNotInitialized) => ErrorCode::BlockNotInitialized,
+        Err(FinalizeBlockError::BlockEmpty) => ErrorCode::BlockEmpty,
+        Ok(block_id) => unsafe {
+            *result = block_id.as_ptr();
+            *result_len = block_id.as_bytes().len();
+            ErrorCode::Success
+        },
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn block_publisher_summarize_block(
+    publisher: *mut c_void,
+    force: bool,
+    result: *mut *const u8,
+    result_len: *mut usize,
+) -> ErrorCode {
+    check_null!(publisher);
+
+    match unsafe { (*(publisher as *mut BlockPublisher)).summarize_block(force) } {
+        Err(FinalizeBlockError::BlockEmpty) => ErrorCode::BlockEmpty,
+        Err(FinalizeBlockError::BlockNotInitialized) => ErrorCode::BlockNotInitialized,
+        Ok(consensus) => unsafe {
+            *result = consensus.as_ptr();
+            *result_len = consensus.as_bytes().len();
+            ErrorCode::Success
+        },
     }
 }
 
