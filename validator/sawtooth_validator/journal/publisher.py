@@ -308,16 +308,19 @@ class BlockPublisher(OwnedPointer):
         self._call(
             'summarize_block',
             ctypes.c_bool(force),
-            ctypes.by_ref(c_result), ctypes.by_ref(c_result_len))
+            ctypes.byref(c_result), ctypes.byref(c_result_len))
 
-        return ffi.from_c_bytes(c_result, c_result_len).decode()
+        return ffi.from_c_bytes(c_result, c_result_len)
 
-    def finalize_block(self, consensus_data, force=False):
+    def finalize_block(self, consensus=None, force=False):
         (c_result, c_result_len) = ffi.prepare_byte_result()
         self._call(
             'finalize_block',
             consensus_data, len(consensus_data),
             ctypes.c_bool(force),
-            ctypes.by_ref(c_result), ctypes.by_ref(c_result_len))
+            ctypes.byref(c_result), ctypes.byref(c_result_len))
 
         return ffi.from_c_bytes(c_result, c_result_len).decode()
+
+    def initialize_block(self, block):
+        self._py_call("initialize_block", ctypes.py_object(block))

@@ -308,6 +308,7 @@ impl SyncBlockPublisher {
         consensus_data: Vec<u8>,
         force: bool,
     ) -> Result<String, FinalizeBlockError> {
+        warn!("FINALIZE");
         let mut option_result = None;
         if let Some(ref mut candidate_block) = &mut state.candidate_block {
             option_result = Some(candidate_block.finalize(consensus_data, force));
@@ -365,6 +366,7 @@ impl SyncBlockPublisher {
         state: &mut BlockPublisherState,
         force: bool,
     ) -> Result<String, FinalizeBlockError> {
+        warn!("SUMMARIZE BLOCK");
         let result = match state.candidate_block {
             None => Some(Err(FinalizeBlockError::BlockNotInitialized)),
             Some(ref mut candidate_block) => match candidate_block.summarize(force) {
@@ -429,6 +431,7 @@ impl SyncBlockPublisher {
     }
 
     pub fn on_batch_received(&self, batch: Batch) {
+        warn!("BATCH RECEIVED");
         let mut state = self.state.write().expect("Lock should not be poisoned");
         for observer in &self.batch_observers {
             let gil = Python::acquire_gil();
@@ -458,6 +461,7 @@ impl SyncBlockPublisher {
     }
 
     fn cancel_block(&self, state: &mut BlockPublisherState) {
+        warn!("CANCEL BLOCK");
         let mut candidate_block = None;
         mem::swap(&mut state.candidate_block, &mut candidate_block);
         if let Some(mut candidate_block) = candidate_block {
