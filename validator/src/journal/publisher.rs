@@ -314,29 +314,24 @@ impl SyncBlockPublisher {
         }
 
         let res = match option_result {
-            Some(result) => {
-                match result {
-                    Ok(finalize_result) => {
-                        state.pending_batches.update(
-                            finalize_result.remaining_batches.clone(),
-                            finalize_result.last_batch.clone(),
-                        );
-                        state.candidate_block = None;
-                        match finalize_result.block {
-                            Some(block) => {
-                                Some(Ok(self.publish_block(
-                                    block,
-                                    finalize_result.injected_batch_ids,
-                                )))
-                            },
-                            None => None,
-                        }
+            Some(result) => match result {
+                Ok(finalize_result) => {
+                    state.pending_batches.update(
+                        finalize_result.remaining_batches.clone(),
+                        finalize_result.last_batch.clone(),
+                    );
+                    state.candidate_block = None;
+                    match finalize_result.block {
+                        Some(block) => Some(Ok(self.publish_block(
+                            block,
+                            finalize_result.injected_batch_ids,
+                        ))),
+                        None => None,
                     }
-                    Err(err) => Some(Err(FinalizeBlockError::BlockNotInitialized)),
                 }
+                Err(err) => Some(Err(FinalizeBlockError::BlockNotInitialized)),
             },
-            None => Some(Err(FinalizeBlockError::BlockNotInitialized))
-
+            None => Some(Err(FinalizeBlockError::BlockNotInitialized)),
         };
         if let Some(val) = res {
             val
@@ -356,11 +351,10 @@ impl SyncBlockPublisher {
     }
 
     fn restart_block(&self, state: &mut BlockPublisherState) -> Result<String, FinalizeBlockError> {
-        state.get_previous_block_id()
+        state
+            .get_previous_block_id()
             .map(|previous_block_id| self.get_block(previous_block_id.as_str()))
-            .map(|previous_block| {
-                self.initialize_block(state, &previous_block)
-            });
+            .map(|previous_block| self.initialize_block(state, &previous_block));
 
         state.candidate_block = None;
         Err(FinalizeBlockError::BlockEmpty)
@@ -375,8 +369,11 @@ impl SyncBlockPublisher {
             None => Some(Err(FinalizeBlockError::BlockNotInitialized)),
             Some(ref mut candidate_block) => match candidate_block.summarize(force) {
                 Ok(summary) => {
-                    if let Some(s) = summary {Some(Ok(s))} else { None }
-
+                    if let Some(s) = summary {
+                        Some(Ok(s))
+                    } else {
+                        None
+                    }
                 }
                 Err(CandidateBlockError::BlockEmpty) => Some(Err(FinalizeBlockError::BlockEmpty)),
             },
@@ -388,11 +385,7 @@ impl SyncBlockPublisher {
         }
     }
 
-    fn publish_block(
-        &self,
-        block: PyObject,
-        injected_batches: Vec<String>,
-    ) -> String {
+    fn publish_block(&self, block: PyObject, injected_batches: Vec<String>) -> String {
         let gil = Python::acquire_gil();
         let py = gil.python();
         let block: Block = block
@@ -597,13 +590,9 @@ impl BlockPublisher {
             .finalize_block(&mut state, consensus_data, force)
     }
 
-    pub fn summarize_block(
-        &self,
-        force: bool,
-    ) -> Result<String, FinalizeBlockError> {
+    pub fn summarize_block(&self, force: bool) -> Result<String, FinalizeBlockError> {
         let mut state = self.publisher.state.write().expect("RwLock is poisoned");
-        self.publisher
-            .summarize_block(&mut state, force)
+        self.publisher.summarize_block(&mut state, force)
     }
 
     pub fn pending_batch_info(&self) -> (i32, i32) {
