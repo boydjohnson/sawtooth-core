@@ -260,7 +260,7 @@ pub extern "C" fn block_publisher_initialize_block(
     };
 
     match unsafe { (*(publisher as *mut BlockPublisher)).initialize_block(block) } {
-        Err(InitializeBlockError::BlockInProgress) => ErrorCode::Success,
+        Err(InitializeBlockError::BlockInProgress) => ErrorCode::BlockInProgress,
         Ok(_) => ErrorCode::Success,
     }
 }
