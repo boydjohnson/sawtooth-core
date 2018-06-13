@@ -21,6 +21,7 @@ import logging
 
 from enum import IntEnum
 
+from sawtooth_validator import ffi
 from sawtooth_validator.ffi import PY_LIBRARY, LIBRARY
 from sawtooth_validator.ffi import OwnedPointer
 
@@ -301,3 +302,22 @@ class BlockPublisher(OwnedPointer):
             ctypes.byref(has))
 
         return has
+
+    def summarize_block(self, force=False):
+        (c_result, c_result_len) = ffi.prepare_byte_result()
+        self._call(
+            'summarize_block',
+            ctypes.c_bool(force),
+            ctypes.by_ref(c_result), ctypes.by_ref(c_result_len))
+
+        return ffi.from_c_bytes(c_result, c_result_len).decode()
+
+    def finalize_block(self, consensus_data, force=False):
+        (c_result, c_result_len) = ffi.prepare_byte_result()
+        self._call(
+            'finalize_block',
+            consensus_data, len(consensus_data),
+            ctypes.c_bool(force),
+            ctypes.by_ref(c_result), ctypes.by_ref(c_result_len))
+
+        return ffi.from_c_bytes(c_result, c_result_len).decode()
