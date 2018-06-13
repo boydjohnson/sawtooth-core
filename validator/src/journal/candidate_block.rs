@@ -453,7 +453,10 @@ impl CandidateBlock {
         consensus_data: Vec<u8>,
         force: bool,
     ) -> Result<FinalizeBlockResult, CandidateBlockError> {
-        let summary = self.summarize(force)?;
+        let mut summary = self.summary.clone();
+        if self.summary.is_none() {
+            summary = self.summarize(force)?;
+        }
         if summary.is_none() {
             return self.build_result(None);
         }
@@ -464,7 +467,7 @@ impl CandidateBlock {
         builder
             .getattr(py, "block_header")
             .expect("BlockBuilder has no attribute 'block_header'")
-            .setattr(py, "consensus", consensus_data.as_slice())
+            .setattr(py, "consensus", cpython::PyBytes::new(py, consensus_data.as_slice()))
             .expect("BlockHeader has no attribute 'consensus'");
 
         self.sign_block(builder);

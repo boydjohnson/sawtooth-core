@@ -316,7 +316,7 @@ class BlockPublisher(OwnedPointer):
         (c_result, c_result_len) = ffi.prepare_byte_result()
         self._call(
             'finalize_block',
-            consensus_data, len(consensus_data),
+            consensus, len(consensus),
             ctypes.c_bool(force),
             ctypes.byref(c_result), ctypes.byref(c_result_len))
 
