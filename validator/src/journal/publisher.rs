@@ -81,6 +81,12 @@ impl BlockPublisherState {
             pending_batches,
         }
     }
+
+    pub fn get_previous_block_id(&self) -> Option<String> {
+        let candidate_block = self.candidate_block.as_ref();
+        let optional_block_id = candidate_block.map(|cb| cb.previous_block_id());
+        optional_block_id
+    }
 }
 
 pub struct SyncBlockPublisher {
@@ -307,41 +313,57 @@ impl SyncBlockPublisher {
             option_result = Some(candidate_block.finalize(consensus_data, force));
         }
 
-        if let Some(result) = option_result {
-            match result {
-                Ok(finalize_result) => {
-                    state.pending_batches.update(
-                        finalize_result.remaining_batches.clone(),
-                        finalize_result.last_batch.clone(),
-                    );
-                    state.candidate_block = None;
-                    match finalize_result.block {
-                        Some(block) => {}
-                        None => {}
+        let res = match option_result {
+            Some(result) => {
+                match result {
+                    Ok(finalize_result) => {
+                        state.pending_batches.update(
+                            finalize_result.remaining_batches.clone(),
+                            finalize_result.last_batch.clone(),
+                        );
+                        state.candidate_block = None;
+                        match finalize_result.block {
+                            Some(block) => {
+                                Some(Ok(self.publish_block(
+                                    state,
+                                    block,
+                                    finalize_result.injected_batch_ids,
+                                )))
+                            },
+                            None => None,
+                        }
                     }
-
-                    Ok(self.publish_block(
-                        state,
-                        finalize_result.block,
-                        finalize_result.injected_batches_ids,
-                    ))
+                    Err(err) => Some(Err(FinalizeBlockError::BlockNotInitialized)),
                 }
-                Err(err) => Err(FinalizeBlockError::BlockNotInitialized),
-            }
+            },
+            None => Some(Err(FinalizeBlockError::BlockNotInitialized))
+
+        };
+        if let Some(val) = res {
+            val
         } else {
-            Err(FinalizeBlockError::BlockNotInitialized)
+            self.restart_block(state)
         }
     }
 
-    fn restart_block(&self, state: &mut BlockPublisherState) -> Result<String, FinalizeBlockError> {
-        let previous_block = self.block_cache
-            .get_item(py, state.candidate_block.previous_block_id.as_str())
+    fn get_block(&self, block_id: &str) -> BlockWrapper {
+        let gil = Python::acquire_gil();
+        let py = gil.python();
+        self.block_cache
+            .get_item(py, block_id)
             .expect("BlockCache has not implemented __get_item__")
             .extract::<BlockWrapper>(py)
-            .expect("Unable to extract BlockWrapper");
+            .expect("Unable to extract BlockWrapper")
+    }
+
+    fn restart_block(&self, state: &mut BlockPublisherState) -> Result<String, FinalizeBlockError> {
+        state.get_previous_block_id()
+            .map(|previous_block_id| self.get_block(previous_block_id.as_str()))
+            .map(|previous_block| {
+                self.initialize_block(state, &previous_block)
+            });
+
         state.candidate_block = None;
-        self.initialize_block(previous_block)
-            .map_err(|_| warn!("Failed to initialize block during restart"));
         Err(FinalizeBlockError::BlockEmpty)
     }
 
@@ -349,16 +371,21 @@ impl SyncBlockPublisher {
         &self,
         state: &mut BlockPublisherState,
         force: bool,
-    ) -> Result<Option<String>, FinalizeBlockError> {
-        match state.candidate_block {
-            None => Err(FinalizeBlockError::BlockNotInitialized),
+    ) -> Result<String, FinalizeBlockError> {
+        let result = match state.candidate_block {
+            None => Some(Err(FinalizeBlockError::BlockNotInitialized)),
             Some(ref mut candidate_block) => match candidate_block.summarize(force) {
                 Ok(summary) => {
-                    if summary.is_none() {}
-                    Ok(summary)
+                    if let Some(s) = summary {Some(Ok(s))} else { None }
+
                 }
-                Err(CandidateBlockError::BlockEmpty) => Err(FinalizeBlockError::BlockEmpty),
+                Err(CandidateBlockError::BlockEmpty) => Some(Err(FinalizeBlockError::BlockEmpty)),
             },
+        };
+        if let Some(err) = result {
+            err
+        } else {
+            self.restart_block(state)
         }
     }
 
@@ -378,6 +405,9 @@ impl SyncBlockPublisher {
         kwargs
             .set_item(py, "keep_batches", injected_batches)
             .unwrap();
+
+        let block_id = block.header_signature.clone();
+
         self.block_sender
             .call_method(py, "send", (block,), Some(&kwargs))
             .expect("BlockSender has no method send");
@@ -386,7 +416,7 @@ impl SyncBlockPublisher {
             COLLECTOR.counter("BlockPublisher.blocks_published_count", None, None);
         blocks_published_count.inc();
 
-        block.header_signature
+        block_id
     }
 
     fn get_public_key(&self, py: Python) -> String {
@@ -563,10 +593,19 @@ impl BlockPublisher {
         &self,
         consensus_data: Vec<u8>,
         force: bool,
-    ) -> Result<FinalizeBlockResult, FinalizeBlockError> {
+    ) -> Result<String, FinalizeBlockError> {
         let mut state = self.publisher.state.write().expect("RwLock is poisoned");
         self.publisher
             .finalize_block(&mut state, consensus_data, force)
+    }
+
+    pub fn summarize_block(
+        &self,
+        force: bool,
+    ) -> Result<String, FinalizeBlockError> {
+        let mut state = self.publisher.state.write().expect("RwLock is poisoned");
+        self.publisher
+            .summarize_block(&mut state, force)
     }
 
     pub fn pending_batch_info(&self) -> (i32, i32) {
