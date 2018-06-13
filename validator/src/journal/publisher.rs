@@ -325,7 +325,6 @@ impl SyncBlockPublisher {
                         match finalize_result.block {
                             Some(block) => {
                                 Some(Ok(self.publish_block(
-                                    state,
                                     block,
                                     finalize_result.injected_batch_ids,
                                 )))
