@@ -391,7 +391,6 @@ impl SyncBlockPublisher {
 
     fn publish_block(
         &self,
-        state: &mut BlockPublisherState,
         block: PyObject,
         injected_batches: Vec<String>,
     ) -> String {
