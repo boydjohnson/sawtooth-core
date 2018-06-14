@@ -477,7 +477,6 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
     }
 
     pub fn on_block_received(&mut self, block: BlockWrapper) -> Result<(), ChainControllerError> {
-        warn!("RECEIVED_BLOCK: {}", block);
         let mut state = self.state
             .write()
             .expect("No lock holder should have poisoned the lock");
@@ -658,6 +657,14 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
                 state.state_pruning_manager.execute(prune_at)
             }
 
+            self.consensus_notifier
+                .notify_block_commit(block.header_signature());
+
+            // Reset the block in the cache with a valid status (which otherwise
+            // would be lost)
+            let mut cacheable_block = block.clone();
+            cacheable_block.status = BlockStatus::Valid;
+            state.block_cache.put(cacheable_block);
             // Updated the block, so we're done
             break Ok(());
         }
