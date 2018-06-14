@@ -80,7 +80,6 @@ class BlockValidator(object):
                  block_cache,
                  state_view_factory,
                  transaction_executor,
-                 squash_handler,
                  identity_signer,
                  data_dir,
                  config_dir,
@@ -96,8 +95,6 @@ class BlockValidator(object):
                 was the chain head.
             transaction_executor: The transaction executor used to
                 process transactions.
-            squash_handler: A parameter passed when creating transaction
-                schedulers.
             identity_signer: A cryptographic signer for signing blocks.
             data_dir: Path to location where persistent data for the
                 consensus module can be stored.
@@ -113,7 +110,6 @@ class BlockValidator(object):
         self._block_cache = block_cache
         self._state_view_factory = state_view_factory
         self._transaction_executor = transaction_executor
-        self._squash_handler = squash_handler
         self._identity_signer = identity_signer
         self._data_dir = data_dir
         self._config_dir = config_dir
@@ -195,7 +191,7 @@ class BlockValidator(object):
                             "Block {} failed validation: {}".format(blkw, err))
 
             scheduler = self._transaction_executor.create_scheduler(
-                self._squash_handler, prev_state_root)
+                prev_state_root)
             self._transaction_executor.execute(scheduler)
 
             for batch, has_more in look_ahead(blkw.block.batches):

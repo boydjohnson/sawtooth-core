@@ -310,7 +310,6 @@ class Validator(object):
             block_cache=block_cache,
             state_view_factory=state_view_factory,
             transaction_executor=transaction_executor,
-            squash_handler=context_manager.get_squash_handler(),
             identity_signer=identity_signer,
             data_dir=data_dir,
             config_dir=config_dir,

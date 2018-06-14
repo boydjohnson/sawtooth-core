@@ -319,6 +319,9 @@ class TxnInformation(object):
     """
 
     def __init__(self, txn, state_hash, base_context_ids):
+        if callable(state_hash):
+            raise ValueError("Why is this a function????")
+
         self.txn = txn
         self.state_hash = state_hash
         self.base_context_ids = base_context_ids
