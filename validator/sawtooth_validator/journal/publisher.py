@@ -25,6 +25,10 @@ from sawtooth_validator import ffi
 from sawtooth_validator.ffi import PY_LIBRARY, LIBRARY
 from sawtooth_validator.ffi import OwnedPointer
 
+from sawtooth_validator.consensus.handlers import BlockEmpty
+from sawtooth_validator.consensus.handlers import BlockInProgress
+from sawtooth_validator.consensus.handlers import BlockNotInitialized
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -145,6 +149,9 @@ class BlockPublisherErrorCode(IntEnum):
     Success = 0
     NullPointerProvided = 0x01
     InvalidInput = 0x02
+    BlockInProgress = 0x03
+    BlockNotInitialized = 0x04
+    BlockEmpty = 0x05
 
 
 class BlockPublisher(OwnedPointer):
@@ -227,6 +234,12 @@ class BlockPublisher(OwnedPointer):
             raise TypeError("Provided null pointer(s)")
         elif res == BlockPublisherErrorCode.InvalidInput:
             raise ValueError("Input was not valid ")
+        elif res == BlockPublisherErrorCode.BlockInProgress:
+            raise BlockInProgress("A block is already in progress")
+        elif res == BlockPublisherErrorCode.BlockNotInitialized:
+            raise BlockNotInitialized("A block is not initialized")
+        elif res == BlockPublisherErrorCode.BlockEmpty:
+            raise BlockEmpty("The block is empty")
 
     def batch_sender(self):
         sender_ptr = ctypes.c_void_p()
