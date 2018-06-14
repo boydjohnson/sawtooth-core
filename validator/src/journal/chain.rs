@@ -335,7 +335,7 @@ impl<BC: BlockCache, BV: BlockValidator> ChainControllerState<BC, BV> {
                             // need to put it back in the cache
                             self.block_cache.put(block);
                         }
-                        None => break
+                        None => break,
                     }
                 }
 
@@ -477,6 +477,7 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
     }
 
     pub fn on_block_received(&mut self, block: BlockWrapper) -> Result<(), ChainControllerError> {
+        warn!("RECEIVED_BLOCK: {}", block);
         let mut state = self.state
             .write()
             .expect("No lock holder should have poisoned the lock");
@@ -513,7 +514,8 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
     }
 
     pub fn fail_block(&self, block: &mut BlockWrapper) {
-        let mut state = self.state.write()
+        let mut state = self.state
+            .write()
             .expect("No lock holder should have poisoned the lock");
 
         block.status = BlockStatus::Invalid;
@@ -678,9 +680,8 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
         }
     }
 
-    fn submit_blocks_for_verification(
+    pub fn submit_blocks_for_verification(
         &self,
-        block_validator: &BV,
         blocks: &[BlockWrapper],
     ) -> Result<(), ChainControllerError> {
         let sender = self.validation_result_sender
@@ -689,7 +690,12 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
                 "Attempted to submit blocks for validation before starting the chain controller",
             )
             .clone();
-        block_validator.submit_blocks_for_verification(blocks, sender);
+
+        self.state
+            .write()
+            .expect("No lock holder should have poisoned the lock")
+            .block_validator
+            .submit_blocks_for_verification(blocks, sender);
         Ok(())
     }
 
@@ -811,7 +817,11 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
             .unwrap();
     }
 
-    fn start_commit_queue_thread(&self, commit_thread_exit: Arc<AtomicBool>, commit_queue_receiver: Receiver<BlockWrapper>) {
+    fn start_commit_queue_thread(
+        &self,
+        commit_thread_exit: Arc<AtomicBool>,
+        commit_queue_receiver: Receiver<BlockWrapper>,
+    ) {
         // Setup the Commit thread:
         let commit_thread_builder =
             thread::Builder::new().name("ChainThread:CommitReceiver".into());

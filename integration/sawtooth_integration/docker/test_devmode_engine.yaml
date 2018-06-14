@@ -105,6 +105,7 @@ services:
     expose:
       - 4004
       - 8800
+      - 5005
     command: "bash -c \"\
         sawadm keygen && \
         sawtooth-validator -v \
@@ -125,6 +126,7 @@ services:
     expose:
       - 4004
       - 8800
+      - 5005
     command: "bash -c \"\
         sawadm keygen && \
         sawtooth-validator -v \

@@ -285,6 +285,9 @@ class TxnExecutionResult:
                  state_changes=None, events=None, data=None, error_message="",
                  error_data=b""):
 
+        if callable(state_hash):
+            raise ValueError("Why is this a function????")
+
         if is_valid and context_id is None:
             raise ValueError(
                 "There must be a context_id for valid transactions")
