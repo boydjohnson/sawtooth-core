@@ -55,7 +55,7 @@ pub struct CandidateBlock {
     identity_signer: cpython::PyObject,
     settings_view: cpython::PyObject,
 
-    summary: Option<String>,
+    summary: Option<Vec<u8>>,
 
     pending_batches: Vec<Batch>,
     pending_batch_ids: HashSet<String>,
@@ -334,7 +334,7 @@ impl CandidateBlock {
             .expect("BlockBuilder has no method 'set_signature'");
     }
 
-    pub fn summarize(&mut self, force: bool) -> Result<Option<String>, CandidateBlockError> {
+    pub fn summarize(&mut self, force: bool) -> Result<Option<Vec<u8>>, CandidateBlockError> {
         if !(force || !self.pending_batches.is_empty()) {
             return Err(CandidateBlockError::BlockEmpty);
         }
@@ -444,7 +444,10 @@ impl CandidateBlock {
         {
             hasher.input_str(&batch.header_signature);
         }
-        self.summary = Some(hasher.result_str());
+        let mut bytes = vec![0; hasher.output_bytes()];
+        hasher.result(&mut bytes);
+        self.summary = Some(bytes);
+
         Ok(self.summary.clone())
     }
 

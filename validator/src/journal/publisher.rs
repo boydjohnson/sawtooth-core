@@ -337,7 +337,8 @@ impl SyncBlockPublisher {
         if let Some(val) = res {
             val
         } else {
-            self.restart_block(state)
+            self.restart_block(state);
+            Err(FinalizeBlockError::BlockEmpty)
         }
     }
 
@@ -351,7 +352,7 @@ impl SyncBlockPublisher {
             .expect("Unable to extract BlockWrapper")
     }
 
-    fn restart_block(&self, state: &mut BlockPublisherState) -> Result<String, FinalizeBlockError> {
+    fn restart_block(&self, state: &mut BlockPublisherState) -> Result<Vec<u8>, FinalizeBlockError> {
 
         state
             .get_previous_block_id()
@@ -369,7 +370,7 @@ impl SyncBlockPublisher {
         &self,
         state: &mut BlockPublisherState,
         force: bool,
-    ) -> Result<String, FinalizeBlockError> {
+    ) -> Result<Vec<u8>, FinalizeBlockError> {
         warn!("SUMMARIZE BLOCK");
         let result = match state.candidate_block {
             None => Some(Err(FinalizeBlockError::BlockNotInitialized)),
@@ -598,7 +599,7 @@ impl BlockPublisher {
             .finalize_block(&mut state, consensus_data, force)
     }
 
-    pub fn summarize_block(&self, force: bool) -> Result<String, FinalizeBlockError> {
+    pub fn summarize_block(&self, force: bool) -> Result<Vec<u8>, FinalizeBlockError> {
         let mut state = self.publisher.state.write().expect("RwLock is poisoned");
         self.publisher.summarize_block(&mut state, force)
     }

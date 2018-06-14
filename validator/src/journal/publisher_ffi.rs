@@ -301,7 +301,7 @@ pub extern "C" fn block_publisher_summarize_block(
         Err(FinalizeBlockError::BlockNotInitialized) => ErrorCode::BlockNotInitialized,
         Ok(consensus) => unsafe {
             *result = consensus.as_ptr();
-            *result_len = consensus.as_bytes().len();
+            *result_len = consensus.as_slice().len();
             ErrorCode::Success
         },
     }
