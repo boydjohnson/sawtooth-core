@@ -50,6 +50,11 @@ pub enum InitializeBlockError {
 }
 
 #[derive(Debug)]
+pub enum CancelBlockError {
+    BlockNotInProgress,
+}
+
+#[derive(Debug)]
 pub enum FinalizeBlockError {
     BlockNotInitialized,
     BlockEmpty,
@@ -567,6 +572,16 @@ impl BlockPublisher {
                 warn!("PublisherThread exiting");
             })
             .unwrap();
+    }
+
+    pub fn cancel_block(&self) -> Result<(), CancelBlockError> {
+        let mut state = self.publisher.state.write().expect("RwLock was poisoned");
+        if state.candidate_block.is_some() {
+            self.publisher.cancel_block(&mut state);
+            Ok(())
+        } else {
+            Err(CancelBlockError::BlockNotInProgress)
+        }
     }
 
     pub fn stop(&self) {
