@@ -547,6 +547,12 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
             self.consensus_notifier
                 .notify_block_invalid(block.header_signature());
         }
+        // Reset the block in the cache with a valid status (which otherwise
+        // would be lost)
+        //
+        self.state.write()
+            .expect("No lock holder should have poisoned the lock")
+            .block_cache.put(block.clone());
     }
 
     fn handle_block_commit(&mut self, block: &BlockWrapper) -> Result<(), ChainControllerError> {
