@@ -330,7 +330,7 @@ impl SyncBlockPublisher {
                         None => None,
                     }
                 }
-                Err(err) => Some(Err(FinalizeBlockError::BlockNotInitialized)),
+                Err(err) => Some(Err(FinalizeBlockError::BlockEmpty)),
             },
             None => Some(Err(FinalizeBlockError::BlockNotInitialized)),
         };
@@ -352,12 +352,16 @@ impl SyncBlockPublisher {
     }
 
     fn restart_block(&self, state: &mut BlockPublisherState) -> Result<String, FinalizeBlockError> {
+
         state
             .get_previous_block_id()
             .map(|previous_block_id| self.get_block(previous_block_id.as_str()))
-            .map(|previous_block| self.initialize_block(state, &previous_block));
+            .map(|previous_block| {
+                state.candidate_block = None;
+                self.initialize_block(state, &previous_block)
+            });
 
-        state.candidate_block = None;
+
         Err(FinalizeBlockError::BlockEmpty)
     }
 
