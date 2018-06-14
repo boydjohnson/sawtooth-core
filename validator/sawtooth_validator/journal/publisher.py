@@ -340,3 +340,6 @@ class BlockPublisher(OwnedPointer):
 
     def initialize_block(self, block):
         self._py_call("initialize_block", ctypes.py_object(block))
+
+    def cancel_block(self):
+        self._call("cancel_block")
