@@ -214,14 +214,7 @@ macro_rules! chain_controller_block_ffi {
                     .light_clone();
 
                 py.allow_threads(move || {
-                   let builder = thread::Builder::new().name(stringify!(ChainController.$cc_fn_name).into());
-                   builder
-                       .spawn(move || {
-                           controller.$cc_fn_name($($block_args)*);
-                       })
-                       .unwrap()
-                       .join()
-                       .unwrap(); 
+                    controller.$cc_fn_name($($block_args)*);
                 });
             }
 
@@ -233,7 +226,49 @@ macro_rules! chain_controller_block_ffi {
 chain_controller_block_ffi!(chain_controller_ignore_block, ignore_block, block, &block);
 chain_controller_block_ffi!(chain_controller_fail_block, fail_block, block, &mut block);
 chain_controller_block_ffi!(chain_controller_commit_block, commit_block, block, block);
-chain_controller_block_ffi!(chain_controller_queue_block, queue_block, block, block);
+
+#[no_mangle]
+pub extern "C" fn chain_controller_queue_block(
+    chain_controller: *mut c_void,
+    block: *mut py_ffi::PyObject,
+) -> ErrorCode {
+    check_null!(chain_controller, block);
+
+    let gil_guard = Python::acquire_gil();
+    let py = gil_guard.python();
+
+    let block: BlockWrapper = unsafe {
+        match PyObject::from_borrowed_ptr(py, block).extract(py) {
+            Ok(val) => val,
+            Err(py_err) => {
+                pylogger::exception(
+                    py,
+                    "chain_controller_queue_block: unable to get block",
+                    py_err,
+                );
+                return ErrorCode::InvalidPythonObject;
+            }
+        }
+    };
+    unsafe {
+        let controller = (*(chain_controller
+            as *mut ChainController<PyBlockCache, PyBlockValidator>))
+            .light_clone();
+
+        py.allow_threads(move || {
+            let builder = thread::Builder::new().name("ChainController.queue_block".into());
+            builder
+                .spawn(move || {
+                    controller.queue_block(block);
+                })
+                .unwrap()
+                .join()
+                .unwrap();
+        });
+    }
+
+    ErrorCode::Success
+}
 
 #[no_mangle]
 pub extern "C" fn chain_controller_submit_blocks_for_verification(
@@ -338,12 +373,16 @@ pub extern "C" fn chain_controller_chain_head(
 ) -> ErrorCode {
     check_null!(chain_controller);
     unsafe {
-        let chain_head = (*(chain_controller
-            as *mut ChainController<PyBlockCache, PyBlockValidator>))
-            .chain_head();
-
         let gil_guard = Python::acquire_gil();
         let py = gil_guard.python();
+
+        let controller = (*(chain_controller
+            as *mut ChainController<PyBlockCache, PyBlockValidator>))
+            .light_clone();
+
+        let chain_head = py.allow_threads(move || {
+            controller.chain_head()
+        });
 
         *block = chain_head.to_py_object(py).steal_ptr();
     }

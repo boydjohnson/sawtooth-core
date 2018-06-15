@@ -660,11 +660,6 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
             self.consensus_notifier
                 .notify_block_commit(block.header_signature());
 
-            // Reset the block in the cache with a valid status (which otherwise
-            // would be lost)
-            let mut cacheable_block = block.clone();
-            cacheable_block.status = BlockStatus::Valid;
-            state.block_cache.put(cacheable_block);
             // Updated the block, so we're done
             break Ok(());
         }
