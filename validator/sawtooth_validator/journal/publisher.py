@@ -316,6 +316,9 @@ class BlockPublisher(OwnedPointer):
 
         return has
 
+    def initialize_block(self, block):
+        self._py_call('initialize_block', ctypes.py_object(block))
+
     def summarize_block(self, force=False):
         (c_result, c_result_len) = ffi.prepare_byte_result()
         self._call(
