@@ -170,6 +170,7 @@ pub fn register(
                         break;
                     }
                     ConsensusRegisterResponse_Status::NOT_READY => {
+                        ::std::thread::sleep(::std::time::Duration::from_millis(1500));
                         msg = sender
                             .send(
                                 Message_MessageType::CONSENSUS_REGISTER_REQUEST,
