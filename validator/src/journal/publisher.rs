@@ -338,7 +338,7 @@ impl SyncBlockPublisher {
                         },
                     }
                 }
-                Err(err) => Some(Err(FinalizeBlockError::BlockEmpty)),
+                Err(CandidateBlockError::BlockEmpty) => Some(Err(FinalizeBlockError::BlockEmpty)),
             },
             None => Some(Err(FinalizeBlockError::BlockNotInitialized)),
         };
@@ -392,8 +392,8 @@ impl SyncBlockPublisher {
                 Err(CandidateBlockError::BlockEmpty) => Some(Err(FinalizeBlockError::BlockEmpty)),
             },
         };
-        if let Some(err) = result {
-            err
+        if let Some(res) = result {
+            res
         } else {
             self.restart_block(state)
         }
@@ -406,15 +406,10 @@ impl SyncBlockPublisher {
             .extract(py)
             .expect("Got block to publish that wasn't a BlockWrapper");
 
-        let kwargs = PyDict::new(py);
-        kwargs
-            .set_item(py, "keep_batches", injected_batches)
-            .unwrap();
-
         let block_id = block.header_signature.clone();
 
         self.block_sender
-            .call_method(py, "send", (block,), Some(&kwargs))
+            .call_method(py, "send", (block, injected_batches), None)
             .expect("BlockSender has no method send");
 
         let mut blocks_published_count =

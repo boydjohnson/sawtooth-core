@@ -214,7 +214,14 @@ macro_rules! chain_controller_block_ffi {
                     .light_clone();
 
                 py.allow_threads(move || {
-                    controller.$cc_fn_name($($block_args)*);
+                   let builder = thread::Builder::new().name(stringify!(ChainController.$cc_fn_name).into());
+                   builder
+                       .spawn(move || {
+                           controller.$cc_fn_name($($block_args)*);
+                       })
+                       .unwrap()
+                       .join()
+                       .unwrap(); 
                 });
             }
 
