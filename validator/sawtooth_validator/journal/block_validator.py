@@ -491,13 +491,14 @@ class BlockScheduler:
                             " %s has not been validated and is not pending."
                             " Adding to pending.", block, prev_block)
                         self._add_block_to_pending(block)
+                    else:
+                        LOGGER.debug(
+                            "Adding block %s for processing",
+                            block.identifier)
 
-                LOGGER.debug(
-                    "Adding block %s for processing", block.identifier)
-
-                # Add the block to the set of blocks being processed
-                self._processing.add(block.identifier)
-                ready.append(block)
+                        # Add the block to the set of blocks being processed
+                        self._processing.add(block.identifier)
+                        ready.append(block)
 
         self._update_gauges()
 
@@ -548,13 +549,14 @@ class BlockScheduler:
             return block_id in self._processing or block_id in self._pending
 
     def _add_block_to_pending(self, block):
-        self._pending.add(block.identifier)
-        previous = block.previous_block_id
-        if previous not in self._descendants:
-            self._descendants[previous] = [block]
-        else:
-            if block not in self._descendants[previous]:
-                self._descendants[previous].append(block)
+        with self._lock:
+            self._pending.add(block.identifier)
+            previous = block.previous_block_id
+            if previous not in self._descendants:
+                self._descendants[previous] = [block]
+            else:
+                if block not in self._descendants[previous]:
+                    self._descendants[previous].append(block)
 
     def _update_gauges(self):
         self._pending_gauge.set_value(len(self._pending))
