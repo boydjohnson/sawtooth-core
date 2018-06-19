@@ -35,6 +35,8 @@ RUN apt-get install -y -q --allow-downgrades \
 RUN apt-get install -y -q --allow-downgrades \
     python3-cbor \
     python3-colorlog \
+    python3-lmdb \
+    python3-secp256k1 \
     python3-toml \
     python3-yaml \
     python3-zmq

@@ -36,6 +36,25 @@ services:
       "
     stop_signal: SIGKILL
 
+  poet-python:
+    build:
+      context: .
+      dockerfile: sdk/examples/poet_python/Dockerfile
+    image: poet-python-local:${ISOLATION_ID}
+    volumes:
+      - ./:/project/sawtooth-core
+    container_name: poet-python-local
+    depends_on:
+      - validator
+    command: |
+      bash -c "
+        bin/protogen
+        cd sdk/examples/poet_python
+        python3 setup.py clean --all
+        python3 setup.py build
+        poet-python -vv -C tcp://validator:5005 --component tcp://validator:4004
+      "
+    stop_signal: SIGKILL
 
   intkey-tp-python:
     build:
