@@ -124,6 +124,8 @@ services:
         sawtooth-validator -v
     \""
     stop_signal: SIGKILL
+    environment:
+      PYTHONPATH: "/project/sawtooth-core/sdk/python"
 
   validator-1:
     build:
