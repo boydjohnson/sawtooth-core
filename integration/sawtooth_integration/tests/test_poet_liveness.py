@@ -75,7 +75,7 @@ class TestPoetLive(unittest.TestCase):
 
 def get_block(node):
     try:
-        result = requests.get((URL % node) + "/blocks?count=1")
+        result = requests.get((URL % node) + "/blocks?count=1", timeout=1.0)
         result = result.json()
         try:
             return result["data"][0]
@@ -87,7 +87,7 @@ def get_block(node):
 
 def get_chain(node):
     try:
-        result = requests.get((URL % node) + "/blocks")
+        result = requests.get((URL % node) + "/blocks", timeout=1.0)
         result = result.json()
         try:
             return result["data"]
