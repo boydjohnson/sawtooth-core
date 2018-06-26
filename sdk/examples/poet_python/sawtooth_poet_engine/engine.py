@@ -171,7 +171,7 @@ class PoetEngine(Engine):
 
         while True:
             try:
-                type_tag, data = updates.get(timeout=1)
+                type_tag, data = updates.get(timeout=0.1)
             except queue.Empty:
                 pass
             else:
