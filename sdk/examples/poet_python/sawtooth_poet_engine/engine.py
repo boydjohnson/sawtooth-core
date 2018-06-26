@@ -66,7 +66,11 @@ class PoetEngine(Engine):
         return initialize
 
     def _check_consensus(self, block):
-        return self._oracle.verify_block(block)
+        try:
+            return self._oracle.verify_block(block)
+        except ValueError as err:
+            LOGGER.warning("Poet check consensus error: %s", err)
+            return False
 
     def _switch_forks(self, current_head, new_head):
         try:
