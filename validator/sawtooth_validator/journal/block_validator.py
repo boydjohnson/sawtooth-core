@@ -192,7 +192,6 @@ class BlockValidator(object):
 
             scheduler = self._transaction_executor.create_scheduler(
                 prev_state_root)
-            self._transaction_executor.execute(scheduler)
 
             for batch, has_more in look_ahead(blkw.block.batches):
                 if has_more:
