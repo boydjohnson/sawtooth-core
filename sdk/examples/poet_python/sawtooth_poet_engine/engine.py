@@ -106,8 +106,10 @@ class PoetEngine(Engine):
     def _summarize_block(self):
         try:
             return self._service.summarize_block()
-        except (exceptions.InvalidState, exceptions.BlockNotReady) as err:
+        except exceptions.InvalidState as err:
             LOGGER.warning(err)
+            return None
+        except exceptions.BlockNotReady:
             return None
 
     def _finalize_block(self):
