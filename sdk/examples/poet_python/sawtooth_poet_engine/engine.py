@@ -204,9 +204,13 @@ class PoetEngine(Engine):
         if self._building:
             if self._check_publish_block():
                 block_id = self._finalize_block()
-                LOGGER.info("Published block %s", block_id.hex())
-                self._published = True
-                self._building = False
+                if block_id:
+                    LOGGER.info("Published block %s", block_id.hex())
+                    self._published = True
+                    self._building = False
+                else:
+                    self._cancel_block()
+                    self._building = False
 
     def _handle_new_block(self, block):
         block = PoetBlock(block)
