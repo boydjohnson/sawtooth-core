@@ -269,6 +269,15 @@ def main(args):
         validator_config.network_private_key,
         roles=validator_config.roles)
 
+    try:
+        import socket
+        LOGGER.critical("endpoint=%s", validator_config.endpoint)
+        if "validator-0" in validator_config.endpoint:
+            from dowser.utils import launch_memory_usage_server
+            launch_memory_usage_server(port=8002)
+    except ImportError:
+        LOGGER.warning("Unable to import Dowser")
+
     # pylint: disable=broad-except
     try:
         validator.start()

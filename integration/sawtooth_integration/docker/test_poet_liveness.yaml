@@ -99,6 +99,8 @@ services:
     expose:
       - 4004
       - 8800
+    ports:
+      - 8002:8002
     working_dir: /root
     command: "bash -c \"\
         cp /project/sawtooth-core/integration/sawtooth_integration/tests/poet_liveness_data/validator-0.toml /etc/sawtooth/validator.toml && \

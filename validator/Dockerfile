@@ -68,6 +68,9 @@ ENV PATH=$PATH:/project/sawtooth-core/bin
 
 WORKDIR /project/sawtooth-core
 
+RUN apt-get install -y -q python3-pip && \
+    pip3 install git+https://github.com/boydjohnson/dowser-py3
+
 CMD echo "\033[0;32m--- Building validator ---\n\033[0m" \
  && ./bin/protogen \
  && cd validator \
