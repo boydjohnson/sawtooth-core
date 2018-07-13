@@ -251,7 +251,7 @@ impl<BC: BlockCache, BV: BlockValidator> ChainControllerState<BC, BV> {
             &mut result.current_chain,
         )?;
 
-        result.transaction_count = result.new_chain.iter().map(|b| b.num_transactions).sum();
+        result.transaction_count = result.new_chain.iter().map(|b| b.num_transactions()).sum();
 
         info!(
             "Comparing current chain head '{}' against new block '{}'",
@@ -331,7 +331,7 @@ impl<BC: BlockCache, BV: BlockValidator> ChainControllerState<BC, BV> {
                 loop {
                     match new_chain.pop() {
                         Some(mut block) => {
-                            block.status = BlockStatus::Invalid;
+                            block.set_status(BlockStatus::Invalid);
                             // need to put it back in the cache
                             self.block_cache.put(block);
                         }
@@ -527,7 +527,7 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
             .write()
             .expect("No lock holder should have poisoned the lock");
 
-        block.status = BlockStatus::Invalid;
+        block.set_status(BlockStatus::Invalid);
 
         state.block_cache.put(block.clone());
     }
@@ -635,7 +635,7 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
 
                 for block in result.new_chain.iter().rev() {
                     let receipts: Vec<TransactionReceipt> = block
-                        .execution_results
+                        .execution_results()
                         .iter()
                         .map(TransactionReceipt::from)
                         .collect();
