@@ -629,7 +629,7 @@ impl BlockManager {
     }
 }
 
-struct GetBlockIterator<'a> {
+pub struct GetBlockIterator<'a> {
     block_manager: &'a BlockManager,
     block_ids: &'a [&'a str],
     index: usize,
@@ -674,7 +674,7 @@ impl<'a> Iterator for GetBlockIterator<'a> {
     }
 }
 
-struct BranchIterator<'a> {
+pub struct BranchIterator<'a> {
     block_manager: &'a BlockManager,
     next_block_id: String,
     blockstore: Option<String>,
@@ -726,7 +726,7 @@ impl<'a> Iterator for BranchIterator<'a> {
     }
 }
 
-struct BranchDiffIterator<'a> {
+pub struct BranchDiffIterator<'a> {
     block_manager: &'a BlockManager,
 
     left_block: Option<&'a Block>,
