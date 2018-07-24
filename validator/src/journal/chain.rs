@@ -15,6 +15,7 @@
  * ------------------------------------------------------------------------------
  */
 
+use std::collections::HashMap;
 use std::io;
 use std::marker::Send;
 use std::marker::Sync;
@@ -34,9 +35,12 @@ use std::time::Duration;
 use protobuf;
 
 use batch::Batch;
+use block::Block;
 use journal;
-use journal::block_validator::{BlockValidator, ValidationError};
-use journal::block_wrapper::{BlockStatus, BlockWrapper};
+use journal::block_manager::BlockManager;
+use journal::block_validator::{
+    BlockValidationResult, BlockValidationStatus, BlockValidator, ValidationError,
+};
 use journal::chain_head_lock::ChainHeadLock;
 use journal::chain_id_manager::ChainIdManager;
 use metrics;
@@ -94,15 +98,7 @@ impl From<ForkResolutionError> for ChainControllerError {
 }
 
 pub trait ChainObserver: Send + Sync {
-    fn chain_update(&mut self, block: &BlockWrapper, receipts: &[&TransactionReceipt]);
-}
-
-pub trait BlockCache: Send + Sync {
-    fn contains(&self, block_id: &str) -> bool;
-
-    fn put(&mut self, block: BlockWrapper);
-
-    fn get(&self, block_id: &str) -> Option<BlockWrapper>;
+    fn chain_update(&mut self, block: &Block, receipts: &[&TransactionReceipt]);
 }
 
 #[derive(Debug)]
@@ -111,24 +107,21 @@ pub enum ChainReadError {
 }
 
 pub trait ChainReader: Send + Sync {
-    fn chain_head(&self) -> Result<Option<BlockWrapper>, ChainReadError>;
+    fn chain_head(&self) -> Result<Option<Block>, ChainReadError>;
     fn count_committed_transactions(&self) -> Result<usize, ChainReadError>;
-    fn get_block_by_block_num(
-        &self,
-        block_num: u64,
-    ) -> Result<Option<BlockWrapper>, ChainReadError>;
+    fn get_block_by_block_num(&self, block_num: u64) -> Result<Option<Block>, ChainReadError>;
 }
 
 pub trait ChainWriter: Send + Sync {
     fn update_chain(
         &mut self,
-        new_chain: &[BlockWrapper],
-        old_chain: &[BlockWrapper],
+        new_chain: &[Block],
+        old_chain: &[Block],
     ) -> Result<(), ChainControllerError>;
 }
 
 pub trait ConsensusNotifier: Send + Sync {
-    fn notify_block_new(&self, block: &BlockWrapper);
+    fn notify_block_new(&self, block: &Block);
     fn notify_block_valid(&self, block_id: &str);
     fn notify_block_invalid(&self, block_id: &str);
     fn notify_block_commit(&self, block_id: &str);
@@ -136,11 +129,11 @@ pub trait ConsensusNotifier: Send + Sync {
 
 /// Holds the results of Block Validation.
 struct ForkResolutionResult<'a> {
-    pub block: &'a BlockWrapper,
-    pub chain_head: &'a Option<BlockWrapper>,
+    pub block: &'a Block,
+    pub chain_head: Option<&'a Block>,
 
-    pub new_chain: Vec<BlockWrapper>,
-    pub current_chain: Vec<BlockWrapper>,
+    pub new_chain: Vec<Block>,
+    pub current_chain: Vec<Block>,
 
     pub committed_batches: Vec<Batch>,
     pub uncommitted_batches: Vec<Batch>,
@@ -148,121 +141,89 @@ struct ForkResolutionResult<'a> {
     pub transaction_count: usize,
 }
 
-impl<'a> ForkResolutionResult<'a> {
-    fn new(block: &'a BlockWrapper) -> Self {
-        ForkResolutionResult {
-            block,
-            chain_head: &None,
-            new_chain: vec![],
-            current_chain: vec![],
-            committed_batches: vec![],
-            uncommitted_batches: vec![],
-            transaction_count: 0,
-        }
-    }
-}
-
 /// Indication that an error occured during fork resolution.
 #[derive(Debug)]
 struct ForkResolutionError(String);
 
-struct ChainControllerState<BC: BlockCache, BV: BlockValidator> {
-    block_cache: BC,
+struct ChainControllerState<BV: BlockValidator> {
+    block_manager: Arc<RwLock<BlockManager>>,
+    block_validation_results: HashMap<String, BlockValidationResult>,
     block_validator: BV,
     chain_writer: Box<ChainWriter>,
     chain_reader: Box<ChainReader>,
-    chain_head: Option<BlockWrapper>,
+    chain_head: Option<Block>,
     chain_id_manager: ChainIdManager,
     observers: Vec<Box<ChainObserver>>,
     state_pruning_manager: StatePruningManager,
 }
 
-impl<BC: BlockCache, BV: BlockValidator> ChainControllerState<BC, BV> {
+impl<BV: BlockValidator> ChainControllerState<BV> {
     fn has_block(&self, block_id: &str) -> bool {
-        self.block_cache.contains(block_id) || self.block_validator.has_block(block_id)
+        let block_ids = [block_id];
+
+        let block_manager = self.block_manager
+            .read()
+            .expect("The block manager lock is not poisoned");
+
+        let block_iter = block_manager.get(&block_ids);
+        block_iter.count() == 1
     }
 
-    /// This is used by a non-genesis journal when it has received the
-    /// genesis block from the genesis validator
-    fn set_genesis(
-        &mut self,
-        lock: &ChainHeadLock,
-        block: BlockWrapper,
-    ) -> Result<(), ChainControllerError> {
-        if block.previous_block_id() == journal::NULL_BLOCK_IDENTIFIER {
-            let chain_id = self.chain_id_manager.get_block_chain_id()?;
-            if chain_id
-                .as_ref()
-                .map(|block_id| block_id != &block.header_signature())
-                .unwrap_or(false)
-            {
-                warn!(
-                    "Block id does not match block chain id {}. Ignoring initial chain head: {}",
-                    chain_id.unwrap(),
-                    block.header_signature()
-                );
-            } else {
-                self.block_validator.validate_block(block.clone())?;
-
-                if chain_id.is_none() {
-                    self.chain_id_manager
-                        .save_block_chain_id(&block.header_signature())?;
-                }
-
-                self.chain_writer.update_chain(&[block.clone()], &[])?;
-                self.chain_head = Some(block.clone());
-                let mut guard = lock.acquire();
-                guard.notify_on_chain_updated(block.clone(), vec![], vec![]);
-            }
-        }
-
-        Ok(())
+    fn block_validation_result(&self, block_id: &str) -> Option<&BlockValidationResult> {
+        self.block_validation_results.get(block_id)
     }
 
     fn build_fork<'a>(
         &mut self,
-        block: &'a BlockWrapper,
-        chain_head: &'a BlockWrapper,
+        block: &'a Block,
+        chain_head: &'a Block,
     ) -> Result<ForkResolutionResult<'a>, ChainControllerError> {
-        let mut result = ForkResolutionResult::new(block);
+        let new_block = block.clone();
 
-        let mut current_block = chain_head.clone();
-        let mut new_block = block.clone();
+        let block_manager = self.block_manager
+            .read()
+            .expect("The block manager lock is not poisoned");
 
-        let chain_comparison = compare_chain_height(&current_block, &new_block);
-        let (compared_block, chain) = if chain_comparison {
-            self.build_fork_diff_to_common_height(&current_block, &new_block)?
-        } else {
-            self.build_fork_diff_to_common_height(&new_block, &current_block)?
+        let new_chain = block_manager
+            .branch_diff(&new_block.header_signature, &chain_head.header_signature)
+            .cloned()
+            .collect::<Vec<Block>>();
+        let current_chain = block_manager
+            .branch_diff(&chain_head.header_signature, &new_block.header_signature)
+            .cloned()
+            .collect::<Vec<Block>>();
+
+        let committed_batches: Vec<Batch> = new_chain.iter().fold(vec![], |mut batches, block| {
+            batches.append(&mut block.batches.clone());
+            batches
+        });
+        let uncommitted_batches: Vec<Batch> =
+            current_chain.iter().fold(vec![], |mut batches, block| {
+                batches.append(&mut block.batches.clone());
+                batches
+            });
+
+        let transaction_count = committed_batches.iter().fold(0, |mut txn_count, batch| {
+            txn_count += batch.transactions.len();
+            txn_count
+        });
+
+        let result = ForkResolutionResult {
+            block: block,
+            chain_head: Some(chain_head),
+            new_chain,
+            current_chain,
+            committed_batches,
+            uncommitted_batches,
+            transaction_count,
         };
-
-        if chain_comparison {
-            current_block = compared_block;
-            result.current_chain = chain;
-        } else {
-            new_block = compared_block;
-            result.new_chain = chain;
-        }
-
-        self.extend_fork_diff_to_common_anscestor(
-            &new_block,
-            &current_block,
-            &mut result.new_chain,
-            &mut result.current_chain,
-        )?;
-
-        result.transaction_count = result.new_chain.iter().map(|b| b.num_transactions()).sum();
 
         info!(
             "Comparing current chain head '{}' against new block '{}'",
-            &chain_head, &block
+            &chain_head, &new_block
         );
 
-        let (commit, uncommit) = get_batch_commit_changes(&result.new_chain, &result.current_chain);
-        result.committed_batches = commit;
-        result.uncommitted_batches = uncommit;
-
-        if result.new_chain[0].previous_block_id() != chain_head.header_signature() {
+        if result.new_chain[0].previous_block_id != chain_head.header_signature {
             let mut moved_to_fork_count =
                 COLLECTOR.counter("ChainController.chain_head_moved_to_fork_count", None, None);
             moved_to_fork_count.inc();
@@ -271,106 +232,15 @@ impl<BC: BlockCache, BV: BlockValidator> ChainControllerState<BC, BV> {
         Ok(result)
     }
 
-    fn build_fork_diff_to_common_height<'a>(
-        &self,
-        head_long: &BlockWrapper,
-        head_short: &BlockWrapper,
-    ) -> Result<(BlockWrapper, Vec<BlockWrapper>), ForkResolutionError> {
-        let mut fork_diff = vec![];
-
-        let last = head_short.block_num();
-        let mut block = head_long.clone();
-
-        loop {
-            if block.block_num() == last
-                || block.previous_block_id() == journal::NULL_BLOCK_IDENTIFIER
-            {
-                return Ok((block, fork_diff));
-            }
-
-            fork_diff.push(block.clone());
-
-            block = self.get_from_cache_strict(
-                &block.previous_block_id(),
-                "Failed to build fork diff",
-            )?;
-        }
-    }
-
-    /// Returns a block from the cache, or an error if it is not found
-    fn get_from_cache_strict(
-        &self,
-        block_id: &str,
-        error_msg_prefix: &'static str,
-    ) -> Result<BlockWrapper, ForkResolutionError> {
-        match self.block_cache.get(block_id) {
-            Some(block) => Ok(block),
-            None => {
-                return Err(ForkResolutionError(format!(
-                    "{}: block missing predecessor {}",
-                    error_msg_prefix, block_id
-                )))
-            }
-        }
-    }
-
-    /// Finds a common ancestor of the two chains. new_blkw and cur_blkw must be
-    /// at the same height, or this will always fail.
-    fn extend_fork_diff_to_common_anscestor(
-        &mut self,
-        new_block: &BlockWrapper,
-        cur_block: &BlockWrapper,
-        new_chain: &mut Vec<BlockWrapper>,
-        cur_chain: &mut Vec<BlockWrapper>,
-    ) -> Result<(), ForkResolutionError> {
-        let mut new = new_block.clone();
-        let mut current = cur_block.clone();
-
-        while current.header_signature() != new.header_signature() {
-            if current.previous_block_id() == journal::NULL_BLOCK_IDENTIFIER
-                || new.previous_block_id() == journal::NULL_BLOCK_IDENTIFIER
-            {
-                loop {
-                    match new_chain.pop() {
-                        Some(mut block) => {
-                            block.set_status(BlockStatus::Invalid);
-                            // need to put it back in the cache
-                            self.block_cache.put(block);
-                        }
-                        None => break,
-                    }
-                }
-
-                return Err(ForkResolutionError(format!(
-                    "Block {} rejected due to wrong genesis {}",
-                    current, new
-                )));
-            }
-
-            new_chain.push(new);
-            new = self.get_from_cache_strict(
-                &new_chain.last().unwrap().previous_block_id(),
-                "Failed to extend new chain",
-            )?;
-
-            cur_chain.push(current);
-            current = self.block_cache
-                .get(&cur_chain.last().unwrap().previous_block_id())
-                .expect("Could not find current chain predecessor in block cache");
-        }
-
-        Ok(())
-    }
-
     fn check_chain_head_updated(
         &self,
-        chain_head: &BlockWrapper,
-        block: &BlockWrapper,
+        chain_head: &Block,
+        block: &Block,
     ) -> Result<bool, ChainControllerError> {
         let current_chain_head = self.chain_reader.chain_head()?;
         if current_chain_head
             .as_ref()
-            .map(|block| block.header_signature() != chain_head.header_signature())
+            .map(|block| block.header_signature != chain_head.header_signature)
             .unwrap_or(false)
         {
             warn!(
@@ -387,54 +257,25 @@ impl<BC: BlockCache, BV: BlockValidator> ChainControllerState<BC, BV> {
     }
 }
 
-/// Returns true if head_a is taller, false if head_b is taller, and true if
-/// the heights are the same.
-fn compare_chain_height(block_a: &BlockWrapper, block_b: &BlockWrapper) -> bool {
-    block_a.block_num() >= block_b.block_num()
-}
-
-/// Get all the batches that should be committed from the new chain and
-/// all the batches that should be uncommitted from the current chain.
-fn get_batch_commit_changes(
-    new_chain: &[BlockWrapper],
-    cur_chain: &[BlockWrapper],
-) -> (Vec<Batch>, Vec<Batch>) {
-    let mut committed_batches = vec![];
-    for block in new_chain {
-        for batch in block.batches() {
-            committed_batches.push(batch.clone());
-        }
-    }
-
-    let mut uncommitted_batches = vec![];
-    for block in cur_chain {
-        for batch in block.batches() {
-            uncommitted_batches.push(batch.clone());
-        }
-    }
-
-    (committed_batches, uncommitted_batches)
-}
-
 #[derive(Clone)]
-pub struct ChainController<BC: BlockCache, BV: BlockValidator> {
-    state: Arc<RwLock<ChainControllerState<BC, BV>>>,
+pub struct ChainController<BV: BlockValidator> {
+    state: Arc<RwLock<ChainControllerState<BV>>>,
     stop_handle: Arc<Mutex<Option<ChainThreadStopHandle>>>,
 
     consensus_notifier: Arc<ConsensusNotifier>,
 
     // Queues
-    block_queue_sender: Option<Sender<BlockWrapper>>,
-    commit_queue_sender: Option<Sender<BlockWrapper>>,
-    validation_result_sender: Option<Sender<BlockWrapper>>,
+    block_queue_sender: Option<Sender<Block>>,
+    commit_queue_sender: Option<Sender<Block>>,
+    validation_result_sender: Option<Sender<BlockValidationResult>>,
 
     state_pruning_block_depth: u32,
     chain_head_lock: ChainHeadLock,
 }
 
-impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC, BV> {
+impl<BV: BlockValidator + 'static> ChainController<BV> {
     pub fn new(
-        block_cache: BC,
+        block_manager: Arc<RwLock<BlockManager>>,
         block_validator: BV,
         chain_writer: Box<ChainWriter>,
         chain_reader: Box<ChainReader>,
@@ -447,7 +288,8 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
     ) -> Self {
         let mut chain_controller = ChainController {
             state: Arc::new(RwLock::new(ChainControllerState {
-                block_cache,
+                block_manager,
+                block_validation_results: HashMap::new(),
                 block_validator,
                 chain_writer,
                 chain_reader,
@@ -470,7 +312,7 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
         chain_controller
     }
 
-    pub fn chain_head(&self) -> Option<BlockWrapper> {
+    pub fn chain_head(&self) -> Option<Block> {
         let state = self.state
             .read()
             .expect("No lock holder should have poisoned the lock");
@@ -478,33 +320,105 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
         state.chain_head.clone()
     }
 
-    pub fn on_block_received(&mut self, block: BlockWrapper) -> Result<(), ChainControllerError> {
-        let mut state = self.state
-            .write()
+    pub fn block_validation_result(&self, block_id: &str) -> Option<BlockValidationResult> {
+        let state = self.state
+            .read()
             .expect("No lock holder should have poisoned the lock");
+        state.block_validation_result(block_id).cloned()
+    }
 
-        if state.has_block(&block.header_signature()) {
+    /// This is used by a non-genesis journal when it has received the
+    /// genesis block from the genesis validator
+    fn set_genesis(&self, block: Block) -> Result<(), ChainControllerError> {
+        if block.previous_block_id == journal::NULL_BLOCK_IDENTIFIER {
+            let chain_id = self.state
+                .read()
+                .expect("No lock holder should have poisoned the lock")
+                .chain_id_manager
+                .get_block_chain_id()?;
+            if chain_id
+                .as_ref()
+                .map(|block_id| block_id != &block.header_signature)
+                .unwrap_or(false)
+            {
+                warn!(
+                    "Block id does not match block chain id {}. Ignoring initial chain head: {}",
+                    chain_id.unwrap(),
+                    block.header_signature
+                );
+            } else {
+                {
+                    let state = self.state
+                        .read()
+                        .expect("No lock holder should have poisoned the lock");
+                    state.block_validator.validate_block(block.clone())?;
+                    state
+                        .block_manager
+                        .write()
+                        .expect("No lock holder should have poisoned the lock")
+                        .put(vec![block.clone()]);
+                }
+                let mut state = self.state
+                    .write()
+                    .expect("No lock holder should have poisoned the lock");
+
+                if chain_id.is_none() {
+                    state
+                        .chain_id_manager
+                        .save_block_chain_id(&block.header_signature)?;
+                }
+
+                state.chain_writer.update_chain(&[block.clone()], &[])?;
+                state.chain_head = Some(block.clone());
+                let mut guard = self.chain_head_lock.acquire();
+                guard.notify_on_chain_updated(block.clone(), vec![], vec![]);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn on_block_received(&mut self, block: Block) -> Result<(), ChainControllerError> {
+        if self.state
+            .read()
+            .expect("No lock holder should have poisoned the lock")
+            .has_block(&block.header_signature)
+        {
             return Ok(());
         }
 
-        if state.chain_head.is_none() {
-            if let Err(err) = state.set_genesis(&self.chain_head_lock, block.clone()) {
+        if self.state
+            .read()
+            .expect("No lock holder should have poisoned the lock")
+            .chain_head
+            .is_none()
+        {
+            if let Err(err) = self.set_genesis(block.clone()) {
                 warn!(
                     "Unable to set chain head; genesis block {} is not valid: {:?}",
-                    block.header_signature(),
-                    err
+                    block.header_signature, err
                 );
             }
             return Ok(());
         }
 
-        state.block_cache.put(block.clone());
         let sender = self.validation_result_sender
             .as_ref()
             .expect(
                 "Attempted to submit blocks for validation before starting the chain controller",
             )
             .clone();
+
+        let state = self.state
+            .read()
+            .expect("No lock holder should have poisoned the lock");
+
+        state
+            .block_manager
+            .write()
+            .expect("No lock holder should have poisoned the lock")
+            .put(vec![block.clone()])
+            .map_err(|err| warn!("{:?}", err));
 
         state
             .block_validator
@@ -520,21 +434,50 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
         state.has_block(block_id)
     }
 
-    pub fn ignore_block(&self, block: &BlockWrapper) {
+    pub fn ignore_block(&self, block: &Block) {
         info!("Ignoring block {}", block)
     }
 
-    pub fn fail_block(&self, block: &mut BlockWrapper) {
+    pub fn fail_block(&self, block: &mut Block) {
         let mut state = self.state
             .write()
             .expect("No lock holder should have poisoned the lock");
 
-        block.set_status(BlockStatus::Invalid);
-
-        state.block_cache.put(block.clone());
+        state
+            .block_validation_results
+            .get_mut(&block.header_signature)
+            .map(|result| result.status = BlockValidationStatus::Invalid);
     }
 
-    pub fn commit_block(&self, block: BlockWrapper) {
+    fn set_block_validation_result(&self, block_id: &str, result: BlockValidationResult) {
+        let mut state = self.state
+            .write()
+            .expect("No lock holder should have poisoned the lock");
+
+        state
+            .block_validation_results
+            .insert(block_id.to_string(), result);
+    }
+
+    fn get_block_unchecked(&self, block_id: String) -> Block {
+        let state = self.state
+            .read()
+            .expect("No lock holder should have poisoned the lock");
+
+        let block_id = block_id.as_str();
+        let block_ids = [block_id];
+        let block_manager = state
+            .block_manager
+            .read()
+            .expect("The block manager lock is not poisoned");
+
+        let block = block_manager.get(&block_ids).next();
+        block
+            .cloned()
+            .expect("The caller must guarantee that the block is known to the block manager")
+    }
+
+    pub fn commit_block(&self, block: Block) {
         if let Some(sender) = self.commit_queue_sender.as_ref() {
             if let Err(err) = sender.send(block) {
                 error!("Unable to add block to block queue: {}", err);
@@ -547,7 +490,7 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
         }
     }
 
-    fn on_block_validated(&self, block: &BlockWrapper) {
+    fn on_block_validated(&self, block: &Block) {
         let mut blocks_considered_count =
             COLLECTOR.counter("ChainController.blocks_considered_count", None, None);
         blocks_considered_count.inc();
@@ -555,7 +498,7 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
         self.consensus_notifier.notify_block_new(block);
     }
 
-    fn handle_block_commit(&mut self, block: &BlockWrapper) -> Result<(), ChainControllerError> {
+    fn handle_block_commit(&mut self, block: &Block) -> Result<(), ChainControllerError> {
         {
             // only hold this lock as long as the loop is active.
             let mut state = self.state
@@ -578,12 +521,12 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
                 let new_roots: Vec<String> = result
                     .new_chain
                     .iter()
-                    .map(|block| block.state_root_hash())
+                    .map(|block| block.state_root_hash.clone())
                     .collect();
                 let current_roots: Vec<(u64, String)> = result
                     .current_chain
                     .iter()
-                    .map(|block| (block.block_num(), block.state_root_hash()))
+                    .map(|block| (block.block_num, block.state_root_hash.clone()))
                     .collect();
                 state.state_pruning_manager.update_queue(
                     new_roots
@@ -609,14 +552,14 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
 
                 let mut chain_head_gauge =
                     COLLECTOR.gauge("ChainController.chain_head", None, None);
-                chain_head_gauge.set_value(&block.header_signature()[0..8]);
+                chain_head_gauge.set_value(&block.header_signature[0..8]);
 
                 let mut committed_transactions_count =
                     COLLECTOR.counter("ChainController.committed_transactions_count", None, None);
                 committed_transactions_count.inc_n(result.transaction_count);
 
                 let mut block_num_guage = COLLECTOR.gauge("ChainController.block_num", None, None);
-                block_num_guage.set_value(block.block_num());
+                block_num_guage.set_value(block.block_num);
 
                 let chain_head = state.chain_head.clone().unwrap();
                 chain_head_guard.notify_on_chain_updated(
@@ -626,7 +569,7 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
                 );
 
                 state.chain_head.as_ref().map(|block| {
-                    block.batches().iter().for_each(|batch| {
+                    block.batches.iter().for_each(|batch| {
                         if batch.trace {
                             debug!(
                                 "TRACE: {}: ChainController.on_block_validated",
@@ -637,8 +580,11 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
                 });
 
                 for block in result.new_chain.iter().rev() {
-                    let receipts: Vec<TransactionReceipt> = block
-                        .execution_results()
+                    let receipts: Vec<TransactionReceipt> = state
+                        .block_validation_results
+                        .get(&block.header_signature)
+                        .expect("A block that has no validation results was committed")
+                        .execution_results
                         .iter()
                         .map(TransactionReceipt::from)
                         .collect();
@@ -661,13 +607,13 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
                     COLLECTOR.gauge("ChainController.committed_transactions_gauge", None, None);
                 committed_transactions_gauge.set_value(total_committed_txns);
 
-                let chain_head_block_num = state.chain_head.as_ref().unwrap().block_num();
+                let chain_head_block_num = state.chain_head.as_ref().unwrap().block_num;
                 if chain_head_block_num + 1 > self.state_pruning_block_depth as u64 {
                     let prune_at = chain_head_block_num - (self.state_pruning_block_depth as u64);
                     match state.chain_reader.get_block_by_block_num(prune_at) {
                         Ok(Some(block)) => state
                             .state_pruning_manager
-                            .add_to_queue(block.block_num(), &block.state_root_hash()),
+                            .add_to_queue(block.block_num, &block.state_root_hash),
                         Ok(None) => warn!("No block at block height {}; ignoring...", prune_at),
                         Err(err) => {
                             error!("Unable to fetch block at height {}: {:?}", prune_at, err)
@@ -684,7 +630,7 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
         }
 
         self.consensus_notifier
-            .notify_block_commit(&block.header_signature());
+            .notify_block_commit(&block.header_signature);
 
         Ok(())
     }
@@ -708,7 +654,7 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
 
     pub fn submit_blocks_for_verification(
         &self,
-        blocks: &[BlockWrapper],
+        blocks: &[Block],
     ) -> Result<(), ChainControllerError> {
         let sender = self.validation_result_sender
             .as_ref()
@@ -725,7 +671,7 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
         Ok(())
     }
 
-    pub fn queue_block(&self, block: BlockWrapper) {
+    pub fn queue_block(&self, block: Block) {
         if self.block_queue_sender.is_some() {
             let sender = self.block_queue_sender.clone();
             if let Err(err) = sender.as_ref().unwrap().send(block) {
@@ -759,11 +705,12 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
             let notify_block = chain_head.clone().unwrap();
             state.chain_head = chain_head;
             let mut gauge = COLLECTOR.gauge("ChainController.chain_head", None, None);
-            gauge.set_value(&notify_block.header_signature()[0..8]);
+            gauge.set_value(&notify_block.header_signature[0..8]);
 
             let mut block_num_guage = COLLECTOR.gauge("ChainController.block_num", None, None);
-            block_num_guage.set_value(&notify_block.block_num());
+            block_num_guage.set_value(&notify_block.block_num);
             let mut guard = self.chain_head_lock.acquire();
+
             guard.notify_on_chain_updated(notify_block, vec![], vec![]);
         }
     }
@@ -809,7 +756,7 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
     fn start_validation_result_thread(
         &self,
         result_thread_exit: Arc<AtomicBool>,
-        validation_result_receiver: Receiver<BlockWrapper>,
+        validation_result_receiver: Receiver<BlockValidationResult>,
     ) {
         // Setup the ValidationResult thread
         let result_thread_builder =
@@ -817,7 +764,7 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
         let result_thread_controller = self.light_clone();
         result_thread_builder
             .spawn(move || loop {
-                let block = match validation_result_receiver
+                let block_validation_result = match validation_result_receiver
                     .recv_timeout(Duration::from_millis(RECV_TIMEOUT_MILLIS))
                 {
                     Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -835,6 +782,12 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
                 };
 
                 if !result_thread_exit.load(Ordering::Relaxed) {
+                    result_thread_controller.set_block_validation_result(
+                        &block_validation_result.block_id.clone(),
+                        block_validation_result.clone(),
+                    );
+                    let block = result_thread_controller
+                        .get_block_unchecked(block_validation_result.block_id);
                     result_thread_controller.on_block_validated(&block);
                 } else {
                     break;
@@ -846,7 +799,7 @@ impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainController<BC,
     fn start_commit_queue_thread(
         &self,
         commit_thread_exit: Arc<AtomicBool>,
-        commit_queue_receiver: Receiver<BlockWrapper>,
+        commit_queue_receiver: Receiver<Block>,
     ) {
         // Setup the Commit thread:
         let commit_thread_builder =
@@ -911,9 +864,9 @@ impl<'a> From<&'a TxnExecutionResult> for TransactionReceipt {
     }
 }
 
-struct ChainThread<BC: BlockCache, BV: BlockValidator> {
-    chain_controller: ChainController<BC, BV>,
-    block_queue: Receiver<BlockWrapper>,
+struct ChainThread<BV: BlockValidator> {
+    chain_controller: ChainController<BV>,
+    block_queue: Receiver<Block>,
     exit: Arc<AtomicBool>,
 }
 
@@ -921,10 +874,10 @@ trait StopHandle: Clone {
     fn stop(&self);
 }
 
-impl<BC: BlockCache + 'static, BV: BlockValidator + 'static> ChainThread<BC, BV> {
+impl<BV: BlockValidator + 'static> ChainThread<BV> {
     fn new(
-        chain_controller: ChainController<BC, BV>,
-        block_queue: Receiver<BlockWrapper>,
+        chain_controller: ChainController<BV>,
+        block_queue: Receiver<Block>,
         exit_flag: Arc<AtomicBool>,
     ) -> Self {
         ChainThread {

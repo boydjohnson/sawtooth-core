@@ -18,6 +18,7 @@
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
 use std::slice;
+use std::sync::{Arc, RwLock};
 
 use cpython::{PyList, PyObject, Python, ToPyObject};
 use py_ffi;
@@ -49,7 +50,7 @@ macro_rules! check_null {
 
 #[no_mangle]
 pub unsafe extern "C" fn block_manager_new(block_manager_ptr: *mut *const c_void) -> ErrorCode {
-    let block_manager = BlockManager::new();
+    let block_manager = Arc::new(RwLock::new(BlockManager::new()));
 
     *block_manager_ptr = Box::into_raw(Box::new(block_manager)) as *const c_void;
 
@@ -85,7 +86,11 @@ pub unsafe extern "C" fn block_manager_put(
         })
         .collect();
 
-    match (*(block_manager as *mut BlockManager)).put(branch) {
+    match (*(block_manager as *mut Arc<RwLock<BlockManager>>))
+        .write()
+        .expect("The block manager lock is not poisoned")
+        .put(branch)
+    {
         Err(BlockManagerError::MissingPredecessor(_)) => ErrorCode::MissingPredecessor,
         Err(BlockManagerError::MissingInput) => ErrorCode::MissingInput,
         Err(BlockManagerError::MissingPredecessorInBranch(_)) => {
@@ -114,8 +119,11 @@ pub unsafe extern "C" fn block_manager_get_iterator_new(
         Err(_) => return ErrorCode::InvalidPythonObject,
     };
 
-    *iterator =
-        Box::into_raw((*(block_manager as *mut BlockManager)).get(&block_ids)) as *const c_void;
+    let block_manager = (*(block_manager as *mut Arc<RwLock<BlockManager>>))
+        .read()
+        .expect("The block manager lock is not poisoned");
+
+    *iterator = Box::into_raw(block_manager.get(&block_ids)) as *const c_void;
 
     ErrorCode::Success
 }
@@ -160,7 +168,11 @@ pub unsafe extern "C" fn block_manager_branch_iterator_new(
         Err(_) => return ErrorCode::InvalidPythonObject,
     };
 
-    *iterator = Box::into_raw((*(block_manager as *mut BlockManager)).branch(tip)) as *const c_void;
+    let block_manager = (*(block_manager as *mut Arc<RwLock<BlockManager>>))
+        .read()
+        .expect("The block manager lock is not poisoned");
+
+    *iterator = Box::into_raw(block_manager.branch(tip)) as *const c_void;
     ErrorCode::Success
 }
 
@@ -208,8 +220,11 @@ pub unsafe extern "C" fn block_manager_branch_diff_iterator_new(
         Err(_) => return ErrorCode::InvalidPythonObject,
     };
 
-    *iterator = Box::into_raw((*(block_manager as *mut BlockManager)).branch_diff(tip, exclude))
-        as *const c_void;
+    let block_manager = (*(block_manager as *mut Arc<RwLock<BlockManager>>))
+        .read()
+        .expect("The block manager lock is not poisoned");
+
+    *iterator = Box::into_raw(block_manager.branch_diff(tip, exclude)) as *const c_void;
 
     ErrorCode::Success
 }

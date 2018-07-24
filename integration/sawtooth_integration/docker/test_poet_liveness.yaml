@@ -123,11 +123,12 @@ services:
           -o poet-settings.batch && \
         sawadm genesis \
           config-genesis.batch config.batch poet.batch poet-settings.batch && \
-        sawtooth-validator -v
+        sawtooth-validator -vv
     \""
     stop_signal: SIGKILL
     environment:
       PYTHONPATH: "/project/sawtooth-core/families/block_info"
+      RUST_BACKTRACE: full
 
   validator-1:
     build:
@@ -148,6 +149,7 @@ services:
     \""
     environment:
       PYTHONPATH: "/project/sawtooth-core/families/block_info"
+      RUST_BACKTRACE: full
     stop_signal: SIGKILL
 
   validator-2:
@@ -169,6 +171,7 @@ services:
     \""
     environment:
       PYTHONPATH: "/project/sawtooth-core/families/block_info"
+      RUST_BACKTRACE: full
     stop_signal: SIGKILL
 
   validator-3:
@@ -190,6 +193,7 @@ services:
     \""
     environment:
       PYTHONPATH: "/project/sawtooth-core/families/block_info"
+      RUST_BACKTRACE: full
     stop_signal: SIGKILL
 
   validator-4:
@@ -211,6 +215,7 @@ services:
     \""
     environment:
       PYTHONPATH: "/project/sawtooth-core/families/block_info"
+      RUST_BACKTRACE: full
     stop_signal: SIGKILL
 
   poet-0:

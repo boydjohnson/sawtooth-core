@@ -21,6 +21,7 @@ from sawtooth_validator.ffi import PY_LIBRARY
 from sawtooth_validator.ffi import LIBRARY
 from sawtooth_validator.ffi import CommonErrorCode
 from sawtooth_validator.ffi import OwnedPointer
+from sawtooth_validator.journal.block_wrapper import BlockStatus
 
 
 class ChainObserver(metaclass=ABCMeta):
@@ -39,7 +40,7 @@ class ChainController(OwnedPointer):
     def __init__(
         self,
         block_store,
-        block_cache,
+        block_manager,
         block_validator,
         state_database,
         chain_head_lock,
@@ -56,10 +57,12 @@ class ChainController(OwnedPointer):
         if observers is None:
             observers = []
 
+        block_validator.set_chain_head_fn(self.chain_head_fn)
+
         _pylibexec(
             'chain_controller_new',
             ctypes.py_object(block_store),
-            ctypes.py_object(block_cache),
+            block_manager.pointer,
             ctypes.py_object(block_validator),
             state_database.pointer,
             chain_head_lock.pointer,
@@ -99,6 +102,21 @@ class ChainController(OwnedPointer):
         _pylibexec('chain_controller_queue_block', self.pointer,
                    ctypes.py_object(block))
 
+    def block_validation_result(self, block_id):
+        result = ctypes.c_int()
+
+        _libexec("chain_controller_block_validation_result", self.pointer,
+                 ctypes.c_char_p(block_id.encode()),
+                 ctypes.byref(result))
+
+        block_status = None
+        if result.value == 1:
+            block_status = BlockStatus.Valid
+        elif result.value == 0:
+            block_status = BlockStatus.Invalid
+
+        return block_status
+
     def submit_blocks_for_verification(self, blocks):
         _pylibexec('chain_controller_submit_blocks_for_verification',
                    self.pointer,
@@ -108,10 +126,13 @@ class ChainController(OwnedPointer):
         """This is exposed for unit tests, and should not be called directly.
         """
         _pylibexec('chain_controller_on_block_received', self.pointer,
-                   ctypes.py_object(block_wrapper))
+                   ctypes.py_object(block_wrapper.block))
 
     @property
     def chain_head(self):
+        return self.chain_head_fn()
+
+    def chain_head_fn(self):
         result = ctypes.py_object()
 
         _pylibexec('chain_controller_chain_head',

@@ -100,7 +100,7 @@ class BlockStore(MutableMapping):
         Returns:
             bytes: the serialized bytes
         """
-        return blkw.block.SerializeToString()
+        return blkw.SerializeToString()
 
     def update_chain(self, new_chain, old_chain=None):
         """

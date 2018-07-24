@@ -44,7 +44,7 @@ class ChainCommitState:
     if that block were to be committed and only checking the batches and
     transactions contained within. ChainCommitState abstracts this process.
     """
-    def __init__(self, head_id, block_cache, block_store):
+    def __init__(self, head_id, block_manager, block_store):
         """The constructor should be passed the previous block id of the block
         being validated."""
         uncommitted_block_ids = list()
@@ -55,38 +55,29 @@ class ChainCommitState:
         # store. Batches and transactions that are in a block that is in the
         # block store and that has a greater block number than this block must
         # be ignored.
-        if head_id != NULL_BLOCK_IDENTIFIER:
-            head = block_cache[head_id]
-            ancestor = head
-            while ancestor.header_signature not in block_store:
-                # For every block not in the block store, we need to track all
-                # its batch ids and transaction ids separately to ensure there
-                # are no duplicates.
-                for batch in ancestor.batches:
-                    uncommitted_batch_ids.add(batch.header_signature)
 
-                    for txn in batch.transactions:
-                        uncommitted_txn_ids.add(txn.header_signature)
-
-                uncommitted_block_ids.append(ancestor.header_signature)
-
-                previous_block_id = ancestor.previous_block_id
-                if previous_block_id == NULL_BLOCK_IDENTIFIER:
-                    break
-
-                ancestor = block_cache[previous_block_id]
+        if block_store.chain_head:
+            block_iterator = block_manager.branch_diff(
+                head_id,
+                block_store.chain_head.header_signature)
         else:
-            ancestor = None
+            block_iterator = block_manager.branch(
+                head_id)
 
+        for block in block_iterator:
+            uncommitted_block_ids.append(block.header_signature)
+            uncommitted_batch_ids.update(
+                [b.header_signature for b in block.batches])
+            uncommitted_txn_ids.update(
+                [t.header_signature
+                 for t in b.transactions
+                 for b in block.batches])
         self.block_store = block_store
-        self.common_ancestor = ancestor
         self.uncommitted_block_ids = uncommitted_block_ids
         self.uncommitted_batch_ids = uncommitted_batch_ids
         self.uncommitted_txn_ids = uncommitted_txn_ids
 
     def _block_in_chain(self, block):
-        if self.common_ancestor is not None:
-            return block.block_num <= self.common_ancestor.block_num
         return False
 
     @staticmethod

@@ -14,6 +14,7 @@
 # ------------------------------------------------------------------------------
 
 from sawtooth_validator.server.events.extractor import EventExtractor
+from sawtooth_validator.protobuf.block_pb2 import BlockHeader
 from sawtooth_validator.protobuf.events_pb2 import Event
 from sawtooth_validator.protobuf.transaction_receipt_pb2 import StateChangeList
 
@@ -24,13 +25,18 @@ class BlockEventExtractor(EventExtractor):
 
     def _make_event(self):
         block = self._block
+        block_header = BlockHeader()
+        block_header.ParseFromString(block.header)
+
         attributes = [
-            Event.Attribute(key="block_id", value=block.identifier),
-            Event.Attribute(key="block_num", value=str(block.block_num)),
+            Event.Attribute(key="block_id", value=block.header_signature),
+            Event.Attribute(key="block_num",
+                            value=str(block_header.block_num)),
             Event.Attribute(
-                key="state_root_hash", value=block.state_root_hash),
+                key="state_root_hash", value=block_header.state_root_hash),
             Event.Attribute(
-                key="previous_block_id", value=block.previous_block_id)]
+                key="previous_block_id",
+                value=block_header.previous_block_id)]
         return Event(event_type="sawtooth/block-commit", attributes=attributes)
 
     def extract(self, subscriptions):
