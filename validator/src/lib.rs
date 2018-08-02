@@ -37,6 +37,7 @@ pub mod execution;
 pub mod gossip;
 pub mod journal;
 mod metrics;
+pub mod permissions;
 pub mod proto;
 pub mod pylogger;
 pub mod scheduler;
