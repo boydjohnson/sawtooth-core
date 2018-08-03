@@ -16,6 +16,8 @@
  */
 
 use batch::Batch;
+use proto;
+use protobuf::RepeatedField;
 use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -39,5 +41,15 @@ impl fmt::Display for Block {
             "Block(id: {}, block_num: {}, state_root_hash: {}, previous_block_id: {})",
             self.header_signature, self.block_num, self.state_root_hash, self.previous_block_id
         )
+    }
+}
+
+impl From<Block> for proto::block::Block {
+    fn from(other: Block) -> Self {
+        let mut proto_block = proto::block::Block::new();
+        proto_block.set_batches(RepeatedField::from_vec(other.batches));
+        proto_block.set_header_signature(other.header_signature);
+        proto_block.set_header(other.header_bytes);
+        proto_block
     }
 }

@@ -391,22 +391,32 @@ pub extern "C" fn chain_controller_on_block_received(
 }
 
 #[no_mangle]
-pub extern "C" fn chain_controller_chain_head(
+pub unsafe extern "C" fn chain_controller_chain_head(
     chain_controller: *mut c_void,
-    block: *mut *const py_ffi::PyObject,
+    block: *mut *const u8,
+    block_len: *mut usize,
 ) -> ErrorCode {
     check_null!(chain_controller);
-    unsafe {
-        let gil_guard = Python::acquire_gil();
-        let py = gil_guard.python();
 
-        let controller =
-            (*(chain_controller as *mut ChainController<PyBlockValidator>)).light_clone();
+    let gil_guard = Python::acquire_gil();
+    let py = gil_guard.python();
 
-        let chain_head = py.allow_threads(move || controller.chain_head());
+    let controller = (*(chain_controller as *mut ChainController<PyBlockValidator>)).light_clone();
 
-        *block = chain_head.into_py_object(py).steal_ptr();
-    }
+    let chain_head = py.allow_threads(move || controller.chain_head());
+
+    let block_bytes = match chain_head.into().write_to_bytes() {
+        Ok(v) => v,
+        Err(err) => {
+            warn!(
+                "During get from chain_head ffi, failed to serialize Block proto to bytes: {}",
+                err
+            );
+            return ErrorCode::Unknown;
+        }
+    };
+    *block_len = v.size();
+    *block = v.as_ptr();
     ErrorCode::Success
 }
 

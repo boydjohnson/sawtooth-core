@@ -158,16 +158,13 @@ pub unsafe extern "C" fn block_manager_get_iterator_drop(iterator: *mut c_void) 
 #[no_mangle]
 pub unsafe extern "C" fn block_manager_get_iterator_next(
     iterator: *mut c_void,
-    block: *mut *const py_ffi::PyObject,
+    block: *mut *const u8,
+    block_len: *mut usize,
 ) -> ErrorCode {
     check_null!(iterator);
 
-    *block = match (*(iterator as *mut GetBlockIterator)).next() {
-        Some(b) => {
-            let gil = Python::acquire_gil();
-            let py = gil.python();
-            b.to_py_object(py).steal_ptr()
-        }
+    block_bytes = match (*(iterator as *mut GetBlockIterator)).next() {
+        Some(b) => b.into(),
         None => return ErrorCode::StopIteration,
     };
 
