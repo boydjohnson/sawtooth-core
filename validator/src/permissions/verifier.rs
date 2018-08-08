@@ -17,11 +17,15 @@
 use batch::Batch;
 use transaction::Transaction;
 
-use permissions::{IdentitySource, Permission, Policy};
+use permissions::{IdentitySource, Permission, Policy, Role};
 
+// Roles
 const ROLE_TRANSACTOR: &str = "transactor";
 const ROLE_BATCH_TRANSACTOR: &str = "transactor.batch_signer";
 const ROLE_TXN_TRANSACTOR: &str = "transactor.transaction_signer";
+const ROLE_NETWORK: &str = "network";
+const ROLE_NETWORK_CONSENSUS: &str = "network.consensus";
+
 const POLICY_DEFAULT: &str = "default";
 
 const ANY_KEY: &str = "*";
@@ -42,6 +46,40 @@ impl PermissionVerifier {
         }
     }
 
+    pub fn with_on_chain_only(on_chain_identities: Box<IdentitySource>) -> Self {
+        PermissionVerifier {
+            on_chain_identities,
+            local_identities: Box::new(EmptyIdentitySource(0)),
+        }
+    }
+
+    /// Check the public key of a node on the network to see if they are
+    /// permitted to participate. The roles being checked are the
+    /// following, from first to last:
+    ///     "network"
+    ///     "default"
+    ///
+    /// The first role that is set will be the one used to enforce if the
+    /// node is allowed.
+    pub fn check_network_role(&self, public_key: &str) -> bool {
+        let policy: Option<&Policy> = self
+            .on_chain_identities
+            .get_role(ROLE_NETWORK)
+            .map(|role| role.policy_name())
+            .or(Some(POLICY_DEFAULT))
+            .and_then(|policy_name| self.on_chain_identities.get_policy(policy_name));
+
+        let allowed = policy
+            .map(|policy| Self::is_allowed(public_key, policy))
+            .unwrap_or(true);
+
+        if !allowed {
+            debug!("Node is not permitted: {}", public_key);
+        }
+
+        allowed
+    }
+
     /// Check the batch signing key against the allowed transactor
     /// permissions. The roles being checked are the following, from first
     /// to last:
@@ -51,34 +89,91 @@ impl PermissionVerifier {
     ///
     /// The first role that is set will be the one used to enforce if the
     /// batch signer is allowed.
-    ///
-    /// Args:
-    ///     batch (Batch): The batch that is being verified.
-    ///     state_root(string): The state root of the previous block. If
-    ///         this is None, the current state root hash will be
-    ///         retrieved.
-    ///     from_state (bool): Whether the identity value should be read
-    ///         directly from state, instead of using the cached values.
-    ///         This should be used when the state_root passed is not from
-    ///         the current chain head.
     pub fn is_batch_signer_authorized(&self, batch: &Batch) -> bool {
-        let policy_name: &str = self
-            .on_chain_identities
-            .get_role(ROLE_BATCH_TRANSACTOR)
-            .or_else(|| self.on_chain_identities.get_role(ROLE_TRANSACTOR))
-            .map(|role| role.policy_name())
-            .unwrap_or(POLICY_DEFAULT);
-
-        let allowed = self
-            .on_chain_identities
-            .get_policy(policy_name)
-            .map(|policy| PermissionVerifier::is_allowed(&batch.signer_public_key, policy))
-            .unwrap_or(true);
-
-        allowed && self.is_transaction_signer_authorized(&batch.transactions)
+        Self::is_batch_allowed(&*self.on_chain_identities, batch, Some(POLICY_DEFAULT))
     }
 
+    /// Check the batch signing key against the allowed transactor
+    /// permissions. The roles being checked are the following, from first
+    /// to last:
+    ///     "transactor.batch_signer"
+    ///     "transactor"
+    ///
+    /// The first role that is set will be the one used to enforce if the
+    /// batch signer is allowed.
     pub fn check_off_chain_batch_roles(&self, batch: &Batch) -> bool {
+        Self::is_batch_allowed(&*self.local_identities, batch, None)
+    }
+
+    fn is_batch_allowed(
+        identity_source: &IdentitySource,
+        batch: &Batch,
+        default_policy: Option<&str>,
+    ) -> bool {
+        let policy: Option<&Policy> = identity_source
+            .get_role(ROLE_BATCH_TRANSACTOR)
+            .or_else(|| identity_source.get_role(ROLE_TRANSACTOR))
+            .map(|role| role.policy_name())
+            .or(default_policy)
+            .and_then(|policy_name| identity_source.get_policy(policy_name));
+
+        let allowed = policy
+            .map(|policy| Self::is_allowed(&batch.signer_public_key, policy))
+            .unwrap_or(true);
+
+        if !allowed {
+            debug!(
+                "Batch Signer: {} is not permitted.",
+                &batch.signer_public_key
+            );
+        }
+
+        allowed
+            && Self::is_transaction_allowed(identity_source, &batch.transactions, default_policy)
+    }
+
+    /// Check the transaction signing key against the allowed transactor
+    /// permissions. The roles being checked are the following, from first
+    /// to last:
+    ///     "transactor.transaction_signer.<TP_Name>"
+    ///     "transactor.transaction_signer"
+    ///     "transactor"
+    ///
+    /// If a default is supplied, that is used.
+    ///
+    /// The first role that is set will be the one used to enforce if the
+    /// transaction signer is allowed.
+    fn is_transaction_allowed(
+        identity_source: &IdentitySource,
+        transactions: &[Transaction],
+        default_policy: Option<&str>,
+    ) -> bool {
+        let general_txn_policy_name: Option<&str> = identity_source
+            .get_role(ROLE_TXN_TRANSACTOR)
+            .or_else(|| identity_source.get_role(ROLE_TRANSACTOR))
+            .map(|role| role.policy_name())
+            .or(default_policy);
+
+        for transaction in transactions {
+            let policy: Option<&Policy> = identity_source
+                .get_role(&format!(
+                    "{}.{}",
+                    ROLE_TXN_TRANSACTOR, transaction.family_name
+                ))
+                .map(|role| role.policy_name())
+                .or(general_txn_policy_name)
+                .and_then(|policy_name| identity_source.get_policy(policy_name));
+
+            if let Some(policy) = policy {
+                if !Self::is_allowed(&transaction.signer_public_key, policy) {
+                    debug!(
+                        "Transaction Signer: {} is not permitted.",
+                        &transaction.signer_public_key
+                    );
+                    return false;
+                }
+            }
+        }
         true
     }
 
@@ -100,57 +195,17 @@ impl PermissionVerifier {
 
         false
     }
+}
 
-    /// Check the transaction signing key against the allowed transactor
-    /// permissions. The roles being checked are the following, from first
-    /// to last:
-    ///     "transactor.transaction_signer.<TP_Name>"
-    ///     "transactor.transaction_signer"
-    ///     "transactor"
-    ///     "default"
-    ///
-    /// The first role that is set will be the one used to enforce if the
-    /// transaction signer is allowed.
-    ///
-    /// Args:
-    ///     transactions (List of Transactions): The transactions that are
-    ///         being verified.
-    ///     state_root(string): The state root of the previous block. If
-    ///         this is None, the current state root hash will be
-    ///         retrieved.
-    ///     from_state (bool): Whether the identity value should be read
-    ///         directly from state, instead of using the cached values.
-    ///         This should be used when the state_root passed is not from
-    ///         the current chain head.
-    fn is_transaction_signer_authorized(&self, transactions: &[Transaction]) -> bool {
-        let policy_name: Option<&str> = self
-            .on_chain_identities
-            .get_role(ROLE_TXN_TRANSACTOR)
-            .or_else(|| self.on_chain_identities.get_role(ROLE_TRANSACTOR))
-            .map(|role| role.policy_name());
+struct EmptyIdentitySource(u8);
 
-        for transaction in transactions {
-            let policy_name = self
-                .on_chain_identities
-                .get_role(&format!(
-                    "{}.{}",
-                    ROLE_TXN_TRANSACTOR, transaction.family_name
-                ))
-                .map(|role| role.policy_name())
-                .or(policy_name)
-                .unwrap_or(POLICY_DEFAULT);
+impl IdentitySource for EmptyIdentitySource {
+    fn get_role(&self, _name: &str) -> Option<&Role> {
+        None
+    }
 
-            if let Some(policy) = self.on_chain_identities.get_policy(policy_name) {
-                if !PermissionVerifier::is_allowed(&transaction.signer_public_key, policy) {
-                    debug!(
-                        "Transaction Signer: {} is not permitted.",
-                        &transaction.signer_public_key
-                    );
-                    return false;
-                }
-            }
-        }
-        true
+    fn get_policy(&self, _name: &str) -> Option<&Policy> {
+        None
     }
 }
 
@@ -383,6 +438,105 @@ mod tests {
             assert!(!permission_verifier.check_off_chain_batch_roles(&batch));
         }
     }
+
+    #[test]
+    /// Test that role: "transactor.batch_signer" is checked properly.
+    ///     1. Set policy to permit signing key. Batch should be allowed.
+    ///     2. Set policy to permit some other key. Batch should be rejected.
+    fn off_chain_transactor_batch_signer_role() {
+        let pub_key = "test_pubkey".to_string();
+        let batch = create_batches(1, 1, &pub_key).into_iter().nth(0).unwrap();
+
+        {
+            let mut off_chain_identities = TestIdentitySource::default();
+            off_chain_identities.add_policy(Policy::new(
+                "policy1",
+                vec![Permission::PermitKey(pub_key.clone())],
+            ));
+            off_chain_identities.add_role(Role::new("transactor.batch_signer", "policy1"));
+
+            let permission_verifier = off_chain_verifier(off_chain_identities);
+            assert!(permission_verifier.check_off_chain_batch_roles(&batch));
+        }
+        {
+            let mut off_chain_identities = TestIdentitySource::default();
+            off_chain_identities.add_policy(Policy::new(
+                "policy1",
+                vec![Permission::PermitKey("other".into())],
+            ));
+            off_chain_identities.add_role(Role::new("transactor.batch_signer", "policy1"));
+
+            let permission_verifier = off_chain_verifier(off_chain_identities);
+            assert!(!permission_verifier.check_off_chain_batch_roles(&batch));
+        }
+    }
+
+    #[test]
+    /// Test that role: "transactor.transaction_signer" is checked properly.
+    ///     1. Set policy to permit signing key. Batch should be allowed.
+    ///     2. Set policy to permit some other key. Batch should be rejected.
+    fn off_chain_transactor_transaction_signer_role() {
+        let pub_key = "test_pubkey".to_string();
+        let batch = create_batches(1, 1, &pub_key).into_iter().nth(0).unwrap();
+
+        {
+            let mut off_chain_identities = TestIdentitySource::default();
+            off_chain_identities.add_policy(Policy::new(
+                "policy1",
+                vec![Permission::PermitKey(pub_key.clone())],
+            ));
+            off_chain_identities.add_role(Role::new("transactor.transaction_signer", "policy1"));
+
+            let permission_verifier = off_chain_verifier(off_chain_identities);
+            assert!(permission_verifier.check_off_chain_batch_roles(&batch));
+        }
+        {
+            let mut off_chain_identities = TestIdentitySource::default();
+            off_chain_identities.add_policy(Policy::new(
+                "policy1",
+                vec![Permission::PermitKey("other".into())],
+            ));
+            off_chain_identities.add_role(Role::new("transactor.transaction_signer", "policy1"));
+
+            let permission_verifier = off_chain_verifier(off_chain_identities);
+            assert!(!permission_verifier.check_off_chain_batch_roles(&batch));
+        }
+    }
+
+    #[test]
+    /// Test that role: "transactor.transaction_signer.intkey" is checked properly.
+    ///     1. Set policy to permit signing key. Batch should be allowed.
+    ///     2. Set policy to permit some other key. Batch should be rejected.
+    fn off_chain_transactor_transaction_signer_family() {
+        let pub_key = "test_pubkey".to_string();
+        let batch = create_batches(1, 1, &pub_key).into_iter().nth(0).unwrap();
+
+        {
+            let mut off_chain_identities = TestIdentitySource::default();
+            off_chain_identities.add_policy(Policy::new(
+                "policy1",
+                vec![Permission::PermitKey(pub_key.clone())],
+            ));
+            off_chain_identities
+                .add_role(Role::new("transactor.transaction_signer.intkey", "policy1"));
+
+            let permission_verifier = off_chain_verifier(off_chain_identities);
+            assert!(permission_verifier.check_off_chain_batch_roles(&batch));
+        }
+        {
+            let mut off_chain_identities = TestIdentitySource::default();
+            off_chain_identities.add_policy(Policy::new(
+                "policy1",
+                vec![Permission::PermitKey("other".into())],
+            ));
+            off_chain_identities
+                .add_role(Role::new("transactor.transaction_signer.intkey", "policy1"));
+
+            let permission_verifier = off_chain_verifier(off_chain_identities);
+            assert!(!permission_verifier.check_off_chain_batch_roles(&batch));
+        }
+    }
+
     fn on_chain_verifier(identity_source: TestIdentitySource) -> PermissionVerifier {
         PermissionVerifier::new(
             Box::new(identity_source),
@@ -393,7 +547,7 @@ mod tests {
     fn off_chain_verifier(identity_source: TestIdentitySource) -> PermissionVerifier {
         PermissionVerifier::new(
             Box::new(TestIdentitySource::default()),
-            Box::new(TestIdentitySource::default()),
+            Box::new(identity_source),
         )
     }
 
