@@ -352,6 +352,37 @@ mod tests {
         assert!(permission_verifier.check_off_chain_batch_roles(&batch));
     }
 
+    #[test]
+    /// Test that role: "transactor" is checked properly in off-chain permissions.
+    ///     1. Set policy to permit signing key. Batch should be allowed.
+    ///     2. Set policy to permit some other key. Batch should be rejected.
+    fn off_chain_transactor_role() {
+        let pub_key = "test_pubkey".to_string();
+        let batch = create_batches(1, 1, &pub_key).into_iter().nth(0).unwrap();
+
+        {
+            let mut off_chain_identities = TestIdentitySource::default();
+            off_chain_identities.add_policy(Policy::new(
+                "policy1",
+                vec![Permission::PermitKey(pub_key.clone())],
+            ));
+            off_chain_identities.add_role(Role::new("transactor", "policy1"));
+
+            let permission_verifier = off_chain_verifier(off_chain_identities);
+            assert!(permission_verifier.check_off_chain_batch_roles(&batch));
+        }
+        {
+            let mut off_chain_identities = TestIdentitySource::default();
+            off_chain_identities.add_policy(Policy::new(
+                "policy1",
+                vec![Permission::DenyKey(pub_key.clone())],
+            ));
+            off_chain_identities.add_role(Role::new("transactor", "policy1"));
+
+            let permission_verifier = off_chain_verifier(off_chain_identities);
+            assert!(!permission_verifier.check_off_chain_batch_roles(&batch));
+        }
+    }
     fn on_chain_verifier(identity_source: TestIdentitySource) -> PermissionVerifier {
         PermissionVerifier::new(
             Box::new(identity_source),
