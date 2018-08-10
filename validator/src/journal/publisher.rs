@@ -233,6 +233,9 @@ impl SyncBlockPublisher {
             return Err(InitializeBlockError::BlockInProgress);
         }
 
+        // Create Ref-D: Hold the predecessor until we are done building the new block. This ext.
+        // ref. must be dropped either 1) after the block is finalized but before sending the block
+        // to the completer or 2) after the block is cancelled.
         self.block_manager
             .ref_block(&previous_block.header_signature)
             .map_err(|err| {
@@ -348,15 +351,23 @@ impl SyncBlockPublisher {
                         .as_ref()
                         .expect("Failed to get candidate block, even though it is being published!")
                         .previous_block_id();
-                    self.block_manager
-                        .unref_block(previous_block_id)
-                        .expect("Unable to unref block that was ref'ed during initialize block");
 
                     state.candidate_block = None;
                     match finalize_result.block {
-                        Some(block) => Some(Ok(
-                            self.publish_block(block, finalize_result.injected_batch_ids)
-                        )),
+                        Some(block) => {
+                            // Drop Ref-D: We have finished creating this block and are about to
+                            // send it to the completer, so we can drop the ext. ref. to its
+                            // predecessor.
+                            self.block_manager
+                                .unref_block(previous_block_id)
+                                .expect(
+                                    "Unable to unref block that was ref'ed during initialize block"
+                                );
+
+                            Some(Ok(
+                                self.publish_block(block, finalize_result.injected_batch_ids)
+                            ))
+                    }
                         None => None,
                     }
                 }
@@ -495,6 +506,7 @@ impl SyncBlockPublisher {
         let mut candidate_block = None;
         mem::swap(&mut state.candidate_block, &mut candidate_block);
         if let Some(mut candidate_block) = candidate_block {
+            // Drop Ref-D: We cancelled the block, so we can drop the ext. ref. to its predecessor.
             self.block_manager
                 .unref_block(&candidate_block.previous_block_id())
                 .expect("Unable to unref block that was ref'ed during initialize block");
