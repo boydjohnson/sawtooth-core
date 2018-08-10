@@ -174,7 +174,7 @@ impl SyncBlockPublisher {
                 .get_previous_block_id()
                 .map(|block_id| self.get_block(block_id.as_str()).ok())
                 .unwrap_or(None);
-            self.cancel_block(state);
+            self.cancel_block(state, false);
         }
 
         state.pending_batches.update_limit(batches_len);
@@ -183,7 +183,7 @@ impl SyncBlockPublisher {
             .rebuild(Some(committed_batches), Some(uncommitted_batches));
 
         if let Some(prev) = previous_block {
-            if let Err(err) = self.initialize_block(state, &prev) {
+            if let Err(err) = self.initialize_block(state, &prev, false) {
                 error!("Unable to initialize block after canceling: {:?}", err);
             }
         }
@@ -227,22 +227,24 @@ impl SyncBlockPublisher {
         &self,
         state: &mut BlockPublisherState,
         previous_block: &Block,
+        ref_block: bool,
     ) -> Result<(), InitializeBlockError> {
         if state.candidate_block.is_some() {
             warn!("Tried to initialize block but block already initialized");
             return Err(InitializeBlockError::BlockInProgress);
         }
 
-        // Create Ref-D: Hold the predecessor until we are done building the new block. This ext.
-        // ref. must be dropped either 1) after the block is finalized but before sending the block
-        // to the completer or 2) after the block is cancelled.
-        self.block_manager
-            .ref_block(&previous_block.header_signature)
-            .map_err(|err| {
-                error!("Unable to ref block!: {:?}", err);
-                InitializeBlockError::MissingPredecessor
-            })?;
-
+        if ref_block {
+            // Create Ref-D: Hold the predecessor until we are done building the new block. This ext.
+            // ref. must be dropped either 1) after the block is finalized but before sending the block
+            // to the completer or 2) after the block is cancelled.
+            self.block_manager
+                .ref_block(&previous_block.header_signature)
+                .map_err(|err| {
+                    error!("Unable to ref block!: {:?}", err);
+                    InitializeBlockError::MissingPredecessor
+                })?;
+        }
         let mut candidate_block = {
             let gil = Python::acquire_gil();
             let py = gil.python();
@@ -358,16 +360,14 @@ impl SyncBlockPublisher {
                             // Drop Ref-D: We have finished creating this block and are about to
                             // send it to the completer, so we can drop the ext. ref. to its
                             // predecessor.
-                            self.block_manager
-                                .unref_block(previous_block_id)
-                                .expect(
-                                    "Unable to unref block that was ref'ed during initialize block"
-                                );
+                            self.block_manager.unref_block(previous_block_id).expect(
+                                "Unable to unref block that was ref'ed during initialize block",
+                            );
 
                             Some(Ok(
                                 self.publish_block(block, finalize_result.injected_batch_ids)
                             ))
-                    }
+                        }
                         None => None,
                     }
                 }
@@ -397,9 +397,9 @@ impl SyncBlockPublisher {
             .map(|previous_block_id| self.get_block(previous_block_id.as_str()))
         {
             Some(Ok(previous_block)) => {
-                self.cancel_block(state);
+                self.cancel_block(state, false);
 
-                if let Err(err) = self.initialize_block(state, &previous_block) {
+                if let Err(err) = self.initialize_block(state, &previous_block, false) {
                     error!("Initialization failed unexpectedly: {:?}", err);
                 }
             }
@@ -502,14 +502,16 @@ impl SyncBlockPublisher {
         }
     }
 
-    fn cancel_block(&self, state: &mut BlockPublisherState) {
+    fn cancel_block(&self, state: &mut BlockPublisherState, unref_block: bool) {
         let mut candidate_block = None;
         mem::swap(&mut state.candidate_block, &mut candidate_block);
         if let Some(mut candidate_block) = candidate_block {
-            // Drop Ref-D: We cancelled the block, so we can drop the ext. ref. to its predecessor.
-            self.block_manager
-                .unref_block(&candidate_block.previous_block_id())
-                .expect("Unable to unref block that was ref'ed during initialize block");
+            if unref_block {
+                // Drop Ref-D: We cancelled the block, so we can drop the ext. ref. to its predecessor.
+                self.block_manager
+                    .unref_block(&candidate_block.previous_block_id())
+                    .expect("Unable to unref block that was ref'ed during initialize block");
+            }
             candidate_block.cancel();
         }
     }
@@ -606,7 +608,7 @@ impl BlockPublisher {
     pub fn cancel_block(&self) -> Result<(), CancelBlockError> {
         let mut state = self.publisher.state.write().expect("RwLock was poisoned");
         if state.candidate_block.is_some() {
-            self.publisher.cancel_block(&mut state);
+            self.publisher.cancel_block(&mut state, true);
             Ok(())
         } else {
             Err(CancelBlockError::BlockNotInProgress)
@@ -623,7 +625,8 @@ impl BlockPublisher {
 
     pub fn initialize_block(&self, previous_block: Block) -> Result<(), InitializeBlockError> {
         let mut state = self.publisher.state.write().expect("RwLock was poisoned");
-        self.publisher.initialize_block(&mut state, &previous_block)
+        self.publisher
+            .initialize_block(&mut state, &previous_block, true)
     }
 
     pub fn finalize_block(
