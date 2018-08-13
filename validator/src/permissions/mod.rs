@@ -14,6 +14,10 @@
  * limitations under the License.
  * ------------------------------------------------------------------------------
  */
+pub mod error;
+pub mod verifier;
+
+use permissions::error::IdentityError;
 
 pub enum Permission {
     PermitKey(String),
@@ -57,8 +61,6 @@ impl Role {
 }
 
 pub trait IdentitySource: Sync + Send {
-    fn get_role(&self, name: &str) -> Option<&Role>;
-    fn get_policy(&self, name: &str) -> Option<&Policy>;
+    fn get_role(&self, name: &str) -> Result<Option<&Role>, IdentityError>;
+    fn get_policy(&self, name: &str) -> Result<Option<&Policy>, IdentityError>;
 }
-
-pub mod verifier;

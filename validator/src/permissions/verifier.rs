@@ -18,6 +18,7 @@ use batch::Batch;
 use transaction::Transaction;
 
 use permissions::{IdentitySource, Permission, Policy, Role};
+use permissions::error::IdentityError;
 
 // Roles
 const ROLE_TRANSACTOR: &str = "transactor";
@@ -61,13 +62,18 @@ impl PermissionVerifier {
     ///
     /// The first role that is set will be the one used to enforce if the
     /// node is allowed.
-    pub fn check_network_role(&self, public_key: &str) -> bool {
-        let policy: Option<&Policy> = self
+    pub fn check_network_role(&self, public_key: &str) -> Result<bool, IdentityError> {
+        let policy_name: Option<&str> = self
             .on_chain_identities
-            .get_role(ROLE_NETWORK)
+            .get_role(ROLE_NETWORK)?
             .map(|role| role.policy_name())
-            .or(Some(POLICY_DEFAULT))
-            .and_then(|policy_name| self.on_chain_identities.get_policy(policy_name));
+            .or(Some(POLICY_DEFAULT));
+
+        let policy: Option<&Policy> = if let Some(name) = policy_name  {
+            self.on_chain_identities.get_policy(name)?
+        } else {
+            None
+        };
 
         let allowed = policy
             .map(|policy| Self::is_allowed(public_key, policy))
@@ -77,7 +83,7 @@ impl PermissionVerifier {
             debug!("Node is not permitted: {}", public_key);
         }
 
-        allowed
+        Ok(allowed)
     }
 
     /// Check the batch signing key against the allowed transactor
@@ -89,7 +95,7 @@ impl PermissionVerifier {
     ///
     /// The first role that is set will be the one used to enforce if the
     /// batch signer is allowed.
-    pub fn is_batch_signer_authorized(&self, batch: &Batch) -> bool {
+    pub fn is_batch_signer_authorized(&self, batch: &Batch) -> Result<bool, IdentityError> {
         Self::is_batch_allowed(&*self.on_chain_identities, batch, Some(POLICY_DEFAULT))
     }
 
@@ -101,7 +107,7 @@ impl PermissionVerifier {
     ///
     /// The first role that is set will be the one used to enforce if the
     /// batch signer is allowed.
-    pub fn check_off_chain_batch_roles(&self, batch: &Batch) -> bool {
+    pub fn check_off_chain_batch_roles(&self, batch: &Batch) -> Result<bool, IdentityError> {
         Self::is_batch_allowed(&*self.local_identities, batch, None)
     }
 
@@ -109,13 +115,22 @@ impl PermissionVerifier {
         identity_source: &IdentitySource,
         batch: &Batch,
         default_policy: Option<&str>,
-    ) -> bool {
-        let policy: Option<&Policy> = identity_source
+    ) -> Result<bool, IdentityError> {
+        let policy_name: Option<&str> = identity_source
             .get_role(ROLE_BATCH_TRANSACTOR)
-            .or_else(|| identity_source.get_role(ROLE_TRANSACTOR))
+            .and_then(|found| if found.is_some() {
+                Ok(found)
+            } else {
+                identity_source.get_role(ROLE_TRANSACTOR)
+            })?
             .map(|role| role.policy_name())
-            .or(default_policy)
-            .and_then(|policy_name| identity_source.get_policy(policy_name));
+            .or(default_policy);
+
+        let policy = if let Some(name) = policy_name {
+            identity_source.get_policy(name)?
+        } else {
+            None
+        };
 
         let allowed = policy
             .map(|policy| Self::is_allowed(&batch.signer_public_key, policy))
@@ -126,10 +141,10 @@ impl PermissionVerifier {
                 "Batch Signer: {} is not permitted.",
                 &batch.signer_public_key
             );
+            return Ok(false)
         }
 
-        allowed
-            && Self::is_transaction_allowed(identity_source, &batch.transactions, default_policy)
+        Self::is_transaction_allowed(identity_source, &batch.transactions, default_policy)
     }
 
     /// Check the transaction signing key against the allowed transactor
@@ -147,22 +162,31 @@ impl PermissionVerifier {
         identity_source: &IdentitySource,
         transactions: &[Transaction],
         default_policy: Option<&str>,
-    ) -> bool {
+    ) -> Result<bool, IdentityError> {
         let general_txn_policy_name: Option<&str> = identity_source
             .get_role(ROLE_TXN_TRANSACTOR)
-            .or_else(|| identity_source.get_role(ROLE_TRANSACTOR))
+            .and_then(|found| if found.is_some() {
+                Ok(found)
+            } else {
+                identity_source.get_role(ROLE_TRANSACTOR)
+            })?
             .map(|role| role.policy_name())
             .or(default_policy);
 
         for transaction in transactions {
-            let policy: Option<&Policy> = identity_source
+            let policy_name: Option<&str> = identity_source
                 .get_role(&format!(
                     "{}.{}",
                     ROLE_TXN_TRANSACTOR, transaction.family_name
-                ))
+                ))?
                 .map(|role| role.policy_name())
-                .or(general_txn_policy_name)
-                .and_then(|policy_name| identity_source.get_policy(policy_name));
+                .or(general_txn_policy_name);
+
+            let policy = if let Some(name) = policy_name {
+                identity_source.get_policy(name)?
+            } else {
+                None
+            };
 
             if let Some(policy) = policy {
                 if !Self::is_allowed(&transaction.signer_public_key, policy) {
@@ -170,11 +194,11 @@ impl PermissionVerifier {
                         "Transaction Signer: {} is not permitted.",
                         &transaction.signer_public_key
                     );
-                    return false;
+                    return Ok(false);
                 }
             }
         }
-        true
+        Ok(true)
     }
 
     fn is_allowed(public_key: &str, policy: &Policy) -> bool {
@@ -200,12 +224,12 @@ impl PermissionVerifier {
 struct EmptyIdentitySource(u8);
 
 impl IdentitySource for EmptyIdentitySource {
-    fn get_role(&self, _name: &str) -> Option<&Role> {
-        None
+    fn get_role(&self, _name: &str) -> Result<Option<&Role>, IdentityError> {
+        Ok(None)
     }
 
-    fn get_policy(&self, _name: &str) -> Option<&Policy> {
-        None
+    fn get_policy(&self, _name: &str) -> Result<Option<&Policy>, IdentityError> {
+        Ok(None)
     }
 }
 
@@ -216,6 +240,7 @@ mod tests {
 
     use batch::Batch;
     use permissions::{IdentitySource, Permission, Policy, Role};
+    use permissions::error::IdentityError;
     use transaction::Transaction;
 
     #[test]
@@ -232,7 +257,7 @@ mod tests {
             Box::new(TestIdentitySource::default()),
         );
 
-        assert!(permission_verifier.is_batch_signer_authorized(&batch));
+        assert!(permission_verifier.is_batch_signer_authorized(&batch).unwrap());
     }
 
     #[test]
@@ -252,7 +277,7 @@ mod tests {
                 vec![Permission::PermitKey("*".into())],
             ));
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(permission_verifier.is_batch_signer_authorized(&batch));
+            assert!(permission_verifier.is_batch_signer_authorized(&batch).unwrap());
         }
 
         {
@@ -262,7 +287,7 @@ mod tests {
                 vec![Permission::DenyKey("*".into())],
             ));
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(!permission_verifier.is_batch_signer_authorized(&batch));
+            assert!(!permission_verifier.is_batch_signer_authorized(&batch).unwrap());
         }
     }
 
@@ -283,7 +308,7 @@ mod tests {
             on_chain_identities.add_role(Role::new("transactor", "policy1"));
 
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(permission_verifier.is_batch_signer_authorized(&batch));
+            assert!(permission_verifier.is_batch_signer_authorized(&batch).unwrap());
         }
         {
             let mut on_chain_identities = TestIdentitySource::default();
@@ -294,7 +319,7 @@ mod tests {
             on_chain_identities.add_role(Role::new("transactor", "policy1"));
 
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(!permission_verifier.is_batch_signer_authorized(&batch));
+            assert!(!permission_verifier.is_batch_signer_authorized(&batch).unwrap());
         }
     }
 
@@ -315,7 +340,7 @@ mod tests {
             on_chain_identities.add_role(Role::new("transactor.batch_signer", "policy1"));
 
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(permission_verifier.is_batch_signer_authorized(&batch));
+            assert!(permission_verifier.is_batch_signer_authorized(&batch).unwrap());
         }
         {
             let mut on_chain_identities = TestIdentitySource::default();
@@ -326,7 +351,7 @@ mod tests {
             on_chain_identities.add_role(Role::new("transactor.batch_signer", "policy1"));
 
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(!permission_verifier.is_batch_signer_authorized(&batch));
+            assert!(!permission_verifier.is_batch_signer_authorized(&batch).unwrap());
         }
     }
 
@@ -347,7 +372,7 @@ mod tests {
             on_chain_identities.add_role(Role::new("transactor.transaction_signer", "policy1"));
 
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(permission_verifier.is_batch_signer_authorized(&batch));
+            assert!(permission_verifier.is_batch_signer_authorized(&batch).unwrap());
         }
         {
             let mut on_chain_identities = TestIdentitySource::default();
@@ -358,7 +383,7 @@ mod tests {
             on_chain_identities.add_role(Role::new("transactor.transaction_signer", "policy1"));
 
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(!permission_verifier.is_batch_signer_authorized(&batch));
+            assert!(!permission_verifier.is_batch_signer_authorized(&batch).unwrap());
         }
     }
 
@@ -380,7 +405,7 @@ mod tests {
                 .add_role(Role::new("transactor.transaction_signer.intkey", "policy1"));
 
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(permission_verifier.is_batch_signer_authorized(&batch));
+            assert!(permission_verifier.is_batch_signer_authorized(&batch).unwrap());
         }
         {
             let mut on_chain_identities = TestIdentitySource::default();
@@ -392,7 +417,7 @@ mod tests {
                 .add_role(Role::new("transactor.transaction_signer.intkey", "policy1"));
 
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(!permission_verifier.is_batch_signer_authorized(&batch));
+            assert!(!permission_verifier.is_batch_signer_authorized(&batch).unwrap());
         }
     }
 
@@ -404,7 +429,7 @@ mod tests {
 
         let permission_verifier = off_chain_verifier(TestIdentitySource::default());
 
-        assert!(permission_verifier.check_off_chain_batch_roles(&batch));
+        assert!(permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
     }
 
     #[test]
@@ -424,7 +449,7 @@ mod tests {
             off_chain_identities.add_role(Role::new("transactor", "policy1"));
 
             let permission_verifier = off_chain_verifier(off_chain_identities);
-            assert!(permission_verifier.check_off_chain_batch_roles(&batch));
+            assert!(permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
         }
         {
             let mut off_chain_identities = TestIdentitySource::default();
@@ -435,7 +460,7 @@ mod tests {
             off_chain_identities.add_role(Role::new("transactor", "policy1"));
 
             let permission_verifier = off_chain_verifier(off_chain_identities);
-            assert!(!permission_verifier.check_off_chain_batch_roles(&batch));
+            assert!(!permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
         }
     }
 
@@ -456,7 +481,7 @@ mod tests {
             off_chain_identities.add_role(Role::new("transactor.batch_signer", "policy1"));
 
             let permission_verifier = off_chain_verifier(off_chain_identities);
-            assert!(permission_verifier.check_off_chain_batch_roles(&batch));
+            assert!(permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
         }
         {
             let mut off_chain_identities = TestIdentitySource::default();
@@ -467,7 +492,7 @@ mod tests {
             off_chain_identities.add_role(Role::new("transactor.batch_signer", "policy1"));
 
             let permission_verifier = off_chain_verifier(off_chain_identities);
-            assert!(!permission_verifier.check_off_chain_batch_roles(&batch));
+            assert!(!permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
         }
     }
 
@@ -488,7 +513,7 @@ mod tests {
             off_chain_identities.add_role(Role::new("transactor.transaction_signer", "policy1"));
 
             let permission_verifier = off_chain_verifier(off_chain_identities);
-            assert!(permission_verifier.check_off_chain_batch_roles(&batch));
+            assert!(permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
         }
         {
             let mut off_chain_identities = TestIdentitySource::default();
@@ -499,7 +524,7 @@ mod tests {
             off_chain_identities.add_role(Role::new("transactor.transaction_signer", "policy1"));
 
             let permission_verifier = off_chain_verifier(off_chain_identities);
-            assert!(!permission_verifier.check_off_chain_batch_roles(&batch));
+            assert!(!permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
         }
     }
 
@@ -521,7 +546,7 @@ mod tests {
                 .add_role(Role::new("transactor.transaction_signer.intkey", "policy1"));
 
             let permission_verifier = off_chain_verifier(off_chain_identities);
-            assert!(permission_verifier.check_off_chain_batch_roles(&batch));
+            assert!(permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
         }
         {
             let mut off_chain_identities = TestIdentitySource::default();
@@ -533,7 +558,7 @@ mod tests {
                 .add_role(Role::new("transactor.transaction_signer.intkey", "policy1"));
 
             let permission_verifier = off_chain_verifier(off_chain_identities);
-            assert!(!permission_verifier.check_off_chain_batch_roles(&batch));
+            assert!(!permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
         }
     }
 
@@ -607,12 +632,12 @@ mod tests {
     }
 
     impl IdentitySource for TestIdentitySource {
-        fn get_role(&self, name: &str) -> Option<&Role> {
-            self.roles.get(name)
+        fn get_role(&self, name: &str) -> Result<Option<&Role>, IdentityError> {
+            Ok(self.roles.get(name))
         }
 
-        fn get_policy(&self, name: &str) -> Option<&Policy> {
-            self.policies.get(name)
+        fn get_policy(&self, name: &str) -> Result<Option<&Policy>, IdentityError> {
+            Ok(self.policies.get(name))
         }
     }
 }
