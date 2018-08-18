@@ -21,6 +21,8 @@ extern crate crypto;
 extern crate hex;
 extern crate libc;
 extern crate lmdb_zero;
+#[macro_use]
+extern crate measure_time;
 extern crate protobuf;
 extern crate python3_sys as py_ffi;
 #[macro_use]
