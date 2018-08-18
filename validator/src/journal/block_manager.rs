@@ -406,6 +406,7 @@ impl BlockManager {
     }
 
     pub fn contains(&self, block_id: &str) -> Result<bool, BlockManagerError> {
+        info_time!("contains");
         let references_by_block_id = self
             .state
             .references_by_block_id
@@ -425,6 +426,7 @@ impl BlockManager {
     ///       branch, an error is returned.
     ///     - If branch is empty, an error is returned
     pub fn put(&self, branch: Vec<Block>) -> Result<(), BlockManagerError> {
+        info_time!("put");
         self.state.put(branch)
     }
 
@@ -460,12 +462,14 @@ impl BlockManager {
     }
 
     pub fn ref_block(&self, tip: &str) -> Result<(), BlockManagerError> {
+        info_time!("ref_block");
         self.state.ref_block(tip)
     }
 
     /// Starting at a tip block, if the tip block's ref-count drops to 0,
     /// remove all blocks until a ref-count of 1 is found.
     pub fn unref_block(&self, tip: &str) -> Result<bool, BlockManagerError> {
+        info_time!("unref_block");
         self.state.unref_block(tip)
     }
 
@@ -541,6 +545,7 @@ impl BlockManager {
     }
 
     pub fn persist(&self, head: &str, store_name: &str) -> Result<(), BlockManagerError> {
+        info_time!("persist");
         if !self
             .state
             .blockstore_by_name
@@ -747,13 +752,11 @@ impl BranchDiffIterator {
             left_iterator
                 .peek()
                 .map(|left| {
-                    left.block_num as i64
-                        - right_iterator
-                            .peek()
-                            .map(|right| right.block_num as i64)
-                            .unwrap_or(0)
-                })
-                .unwrap_or(0)
+                    left.block_num as i64 - right_iterator
+                        .peek()
+                        .map(|right| right.block_num as i64)
+                        .unwrap_or(0)
+                }).unwrap_or(0)
         };
         if difference < 0 {
             // seek to the same height on the exclude side
