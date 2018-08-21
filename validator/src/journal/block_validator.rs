@@ -283,7 +283,13 @@ where
     }
 
     fn validate_duplicates_and_dependencies(&self, block: &Block) -> Result<(), ValidationError> {
-        unimplemented!();
+        let chain_commit_state = ChainCommitState::new(
+            &block.previous_block_id,
+            &self.block_manager,
+            self.batch_index.clone(),
+            self.transaction_index.clone(),
+            self.block_store.clone(),
+        );
     }
 
     fn validate_permissions(
