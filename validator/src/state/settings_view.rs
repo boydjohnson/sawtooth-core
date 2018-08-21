@@ -61,24 +61,6 @@ impl From<ParseIntError> for SettingsViewError {
     }
 }
 
-pub struct SettingsViewFactory {
-    state_db: LmdbDatabase,
-}
-
-impl SettingsViewFactory {
-    pub fn new(state_db: LmdbDatabase) -> Self {
-        SettingsViewFactory { state_db }
-    }
-
-    pub fn create_settings_view<S: Into<String>>(
-        &mut self,
-        merkle_root: S,
-    ) -> Result<SettingsView<MerkleDatabase>, StateDatabaseError> {
-        let merkle_db = MerkleDatabase::new(self.state_db.clone(), Some(&merkle_root.into()))?;
-        Ok(SettingsView::new(merkle_db))
-    }
-}
-
 pub struct SettingsView {
     state_reader: Box<StateReader>,
 }
