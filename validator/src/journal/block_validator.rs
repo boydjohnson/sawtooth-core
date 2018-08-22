@@ -15,17 +15,55 @@
  * ------------------------------------------------------------------------------
  */
 
+use std::sync::{mpsc::Sender, Arc};
+
 use cpython;
 use cpython::{FromPyObject, ObjectProtocol, PyObject, Python};
 
+use batch::Batch;
 use block::Block;
+use execution::execution_platform::{ExecutionPlatform, NULL_STATE_HASH};
+use gossip::permission_verifier::PermissionVerifier;
+use journal::block_manager::BlockManager;
+use journal::block_store::{BatchIndex, BlockStore, TransactionIndex};
 use journal::block_wrapper::BlockStatus;
+use journal::chain_commit_state::{ChainCommitState, ChainCommitStateError};
+use journal::validation_rule_enforcer::enforce_validation_rules;
 use scheduler::TxnExecutionResult;
-use std::sync::mpsc::Sender;
+use state::{settings_view::SettingsView, state_view_factory::StateViewFactory};
 
 #[derive(Debug)]
 pub enum ValidationError {
     BlockValidationFailure(String),
+    BlockValidationError(String),
+    BlockStoreUpdated,
+}
+
+impl From<ChainCommitStateError> for ValidationError {
+    fn from(other: ChainCommitStateError) -> Self {
+        match other {
+            ChainCommitStateError::DuplicateBatch(ref batch_id) => {
+                ValidationError::BlockValidationFailure(format!(
+                    "Validation failure, duplicate batch {}",
+                    batch_id
+                ))
+            }
+            ChainCommitStateError::DuplicateTransaction(ref txn_id) => {
+                ValidationError::BlockValidationFailure(format!(
+                    "Validation failure, duplicate transaction {}",
+                    txn_id
+                ))
+            }
+            ChainCommitStateError::MissingDependency(ref txn_id) => {
+                ValidationError::BlockValidationFailure(format!(
+                    "Validation failure, missing dependency {}",
+                    txn_id
+                ))
+            }
+            ChainCommitStateError::Error(reason) => ValidationError::BlockValidationError(reason),
+            ChainCommitStateError::BlockStoreUpdated => ValidationError::BlockStoreUpdated,
+        }
+    }
 }
 
 pub trait BlockValidator: Sync + Send + Clone {
@@ -68,5 +106,402 @@ impl<'source> FromPyObject<'source> for BlockValidationResult {
             num_transactions,
             status,
         })
+    }
+}
+
+trait StateBlockValidation {
+    fn validate_block(
+        &self,
+        block: Block,
+        previous_state_root: Option<&String>,
+    ) -> Result<BlockValidationResult, ValidationError>;
+}
+
+trait BlockValidation {
+    fn validate_block(
+        &self,
+        block: &Block,
+        previous_state_root: Option<&String>,
+    ) -> Result<(), ValidationError>;
+}
+
+trait BlockStoreUpdatedCheck {
+    fn check_chain_head_updated(
+        &self,
+        expected_chain_head_id: Option<&String>,
+    ) -> Result<bool, ValidationError>;
+}
+
+struct BlockValidationProcessor<
+    BS: BlockStore,
+    SBV: StateBlockValidation,
+    C: BlockStoreUpdatedCheck,
+> {
+    block_store: BS,
+    block_manager: BlockManager,
+    dependent_validations: Vec<Box<BlockValidation>>,
+    independent_validations: Vec<Box<BlockValidation>>,
+    state_validation: SBV,
+    check: C,
+}
+
+impl<BS: BlockStore, SBV: StateBlockValidation, C: BlockStoreUpdatedCheck>
+    BlockValidationProcessor<BS, SBV, C>
+{
+    fn new(
+        block_store: BS,
+        block_manager: BlockManager,
+        dependent_validations: Vec<Box<BlockValidation>>,
+        independent_validations: Vec<Box<BlockValidation>>,
+        state_validation: SBV,
+        check: C,
+    ) -> Self {
+        BlockValidationProcessor {
+            block_store,
+            block_manager,
+            dependent_validations,
+            independent_validations,
+            state_validation,
+            check,
+        }
+    }
+
+    fn validate_block(&self, block: Block) -> Result<BlockValidationResult, ValidationError> {
+        let previous_blocks_state_hash = self
+            .block_manager
+            .get(&[&block.previous_block_id])
+            .next()
+            .unwrap_or(None)
+            .map(|b| b.state_root_hash.clone());
+
+        'outer: loop {
+            let chain_head_option = self
+                .block_store
+                .iter()
+                .map_err(|err| {
+                    ValidationError::BlockValidationError(format!(
+                        "There was an error reading from the BlockStore: {:?}",
+                        err
+                    ))
+                })?
+                .next()
+                .map(|b| b.header_signature.clone());
+
+            for validation in &self.dependent_validations {
+                match validation.validate_block(&block, previous_blocks_state_hash.as_ref()) {
+                    Ok(()) => (),
+                    Err(ValidationError::BlockStoreUpdated) => continue 'outer,
+                    Err(err) => return Err(err),
+                }
+            }
+
+            if !self
+                .check
+                .check_chain_head_updated(chain_head_option.as_ref())?
+            {
+                break;
+            }
+        }
+
+        for validation in &self.independent_validations {
+            match validation.validate_block(&block, previous_blocks_state_hash.as_ref()) {
+                Ok(()) => (),
+                Err(err) => return Err(err),
+            }
+        }
+
+        self.state_validation
+            .validate_block(block, previous_blocks_state_hash.as_ref())
+    }
+}
+
+struct BatchesInBlockValidation<TEP: ExecutionPlatform> {
+    transaction_executor: TEP,
+}
+
+impl<TEP: ExecutionPlatform> StateBlockValidation for BatchesInBlockValidation<TEP> {
+    fn validate_block(
+        &self,
+        block: Block,
+        previous_state_root: Option<&String>,
+    ) -> Result<BlockValidationResult, ValidationError> {
+        let ending_state_hash = &block.state_root_hash;
+        let null_state_hash = NULL_STATE_HASH.into();
+        let state_root = previous_state_root.unwrap_or(&null_state_hash);
+        let mut scheduler = self
+            .transaction_executor
+            .create_scheduler(state_root)
+            .map_err(|err| {
+                ValidationError::BlockValidationError(format!(
+                    "Error during validation of block {} batches: {:?}",
+                    &block.header_signature, err,
+                ))
+            })?;
+
+        let greatest_batch_index = block.batches.len() - 1;
+        let mut index = 0;
+        for batch in block.batches {
+            if index < greatest_batch_index {
+                scheduler.add_batch(batch, None, false).map_err(|err| {
+                    ValidationError::BlockValidationError(format!(
+                        "While adding a batch to the schedule: {:?}",
+                        err
+                    ))
+                })?;
+            } else {
+                scheduler
+                    .add_batch(batch, Some(ending_state_hash), false)
+                    .map_err(|err| {
+                        ValidationError::BlockValidationError(format!(
+                            "While adding the last batch to the schedule: {:?}",
+                            err
+                        ))
+                    })?;
+            }
+            index += 1;
+        }
+        scheduler.finalize(false).map_err(|err| {
+            ValidationError::BlockValidationError(format!(
+                "During call to scheduler.finalize: {:?}",
+                err
+            ))
+        })?;
+        let execution_results = scheduler
+            .complete(true)
+            .map_err(|err| {
+                ValidationError::BlockValidationError(format!(
+                    "During call to scheduler.complete: {:?}",
+                    err
+                ))
+            })?
+            .ok_or(ValidationError::BlockValidationFailure(format!(
+                "Block {} failed validation: no execution results produced",
+                &block.header_signature
+            )))?;
+
+        if let Some(ref actual_ending_state_hash) = execution_results.ending_state_hash {
+            if ending_state_hash != actual_ending_state_hash {
+                return Err(ValidationError::BlockValidationFailure(format!(
+                "Block {} failed validation: expected state hash {}, validation found state hash {}",
+                &block.header_signature,
+                ending_state_hash,
+                actual_ending_state_hash
+            )));
+            }
+        } else {
+            return Err(ValidationError::BlockValidationFailure(format!(
+                "Block {} failed validation: no ending state hash was produced",
+                &block.header_signature
+            )));
+        }
+
+        let mut results = vec![];
+        for (batch_id, transaction_execution_results) in execution_results.batch_results {
+            if let Some(txn_results) = transaction_execution_results {
+                for r in txn_results {
+                    if !r.is_valid {
+                        return Err(ValidationError::BlockValidationFailure(format!(
+                            "Block {} failed validation: batch {} was invalid due to transaction {}",
+                            &block.header_signature,
+                            &batch_id,
+                            &r.signature)));
+                    }
+                    results.push(r);
+                }
+            } else {
+                return Err(ValidationError::BlockValidationFailure(format!(
+                    "Block {} failed validation: batch {} did not have transaction results",
+                    &block.header_signature, &batch_id
+                )));
+            }
+        }
+        Ok(BlockValidationResult {
+            block_id: block.header_signature,
+            num_transactions: results.len() as u64,
+            execution_results: results,
+            status: BlockStatus::Valid,
+        })
+    }
+}
+
+struct DuplicatesAndDependenciesValidation<B: BatchIndex, T: TransactionIndex, BS: BlockStore> {
+    batch_index: B,
+    transaction_index: T,
+    block_store: BS,
+    block_manager: BlockManager,
+}
+
+impl<B: BatchIndex, T: TransactionIndex, BS: BlockStore>
+    DuplicatesAndDependenciesValidation<B, T, BS>
+{
+    fn new(
+        batch_index: B,
+        transaction_index: T,
+        block_store: BS,
+        block_manager: BlockManager,
+    ) -> Self {
+        DuplicatesAndDependenciesValidation {
+            batch_index,
+            transaction_index,
+            block_store,
+            block_manager,
+        }
+    }
+}
+
+impl<B: BatchIndex, T: TransactionIndex, BS: BlockStore> BlockValidation
+    for DuplicatesAndDependenciesValidation<B, T, BS>
+{
+    fn validate_block(&self, block: &Block, _: Option<&String>) -> Result<(), ValidationError> {
+        let chain_commit_state = ChainCommitState::new(
+            &block.previous_block_id,
+            &self.block_manager,
+            &self.batch_index,
+            &self.transaction_index,
+            &self.block_store,
+        )?;
+
+        let batch_ids = block
+            .batches
+            .iter()
+            .map(|b| b.header_signature.clone())
+            .collect();
+
+        chain_commit_state.validate_no_duplicate_batches(batch_ids)?;
+
+        let txn_ids = block.batches.iter().fold(vec![], |mut arr, b| {
+            for txn in &b.transactions {
+                arr.push(txn.header_signature.clone());
+            }
+            arr
+        });
+
+        chain_commit_state.validate_no_duplicate_transactions(txn_ids)?;
+
+        let transactions = block.batches.iter().fold(vec![], |mut arr, b| {
+            for txn in &b.transactions {
+                arr.push(txn.clone());
+            }
+            arr
+        });
+        chain_commit_state.validate_transaction_dependencies(&transactions)?;
+        Ok(())
+    }
+}
+
+struct PermissionValidation<PV: PermissionVerifier> {
+    permission_verifier: PV,
+}
+
+impl<PV: PermissionVerifier> PermissionValidation<PV> {
+    fn new(permission_verifier: PV) -> Self {
+        PermissionValidation {
+            permission_verifier,
+        }
+    }
+}
+
+impl<PV: PermissionVerifier> BlockValidation for PermissionValidation<PV> {
+    fn validate_block(
+        &self,
+        block: &Block,
+        prev_state_root: Option<&String>,
+    ) -> Result<(), ValidationError> {
+        if block.block_num != 0 {
+            let state_root = prev_state_root
+                .ok_or(
+                    ValidationError::BlockValidationError(
+                        format!("During permission check of block {} block_num is {} but missing a previous state root",
+                            &block.header_signature, block.block_num)))?;
+            for batch in &block.batches {
+                let batch_id = &batch.header_signature;
+                if !self
+                    .permission_verifier
+                    .is_batch_signer_authorized(batch, state_root, true)
+                {
+                    return Err(ValidationError::BlockValidationError(
+                            format!("Block {} failed permission verification: batch {} signer is not authorized",
+                            &block.header_signature,
+                            batch_id)));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+struct OnChainRulesValidation {
+    view_factory: StateViewFactory,
+}
+
+impl OnChainRulesValidation {
+    fn new(view_factory: StateViewFactory) -> Self {
+        OnChainRulesValidation { view_factory }
+    }
+}
+
+impl BlockValidation for OnChainRulesValidation {
+    fn validate_block(
+        &self,
+        block: &Block,
+        prev_state_root: Option<&String>,
+    ) -> Result<(), ValidationError> {
+        if block.block_num != 0 {
+            let state_root = prev_state_root
+                .ok_or(
+                    ValidationError::BlockValidationError(
+                        format!("During check of on-chain rules for block {}, block num was {}, but missing a previous state root",
+                            &block.header_signature,
+                            block.block_num)))?;
+            let settings_view: SettingsView =
+                self.view_factory.create_view(state_root).map_err(|err| {
+                    ValidationError::BlockValidationError(format!(
+                        "During validate_on_chain_rules, error creating settings view: {:?}",
+                        err
+                    ))
+                })?;
+            let batches: Vec<&Batch> = block.batches.iter().collect();
+            if !enforce_validation_rules(&settings_view, &block.signer_public_key, &batches) {
+                return Err(ValidationError::BlockValidationFailure(format!(
+                    "Block {} failed validation rules",
+                    &block.header_signature
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+struct ChainHeadCheck<BS: BlockStore> {
+    block_store: BS,
+}
+
+impl<BS: BlockStore> ChainHeadCheck<BS> {
+    fn new(block_store: BS) -> Self {
+        ChainHeadCheck { block_store }
+    }
+}
+
+impl<BS: BlockStore> BlockStoreUpdatedCheck for ChainHeadCheck<BS> {
+    fn check_chain_head_updated(
+        &self,
+        original_chain_head: Option<&String>,
+    ) -> Result<bool, ValidationError> {
+        let chain_head = self
+            .block_store
+            .iter()
+            .map_err(|err| {
+                ValidationError::BlockValidationError(format!(
+                    "There was an error reading from the BlockStore: {:?}",
+                    err
+                ))
+            })?
+            .next()
+            .map(|b| b.header_signature.clone());
+
+        if chain_head.as_ref() != original_chain_head {
+            return Ok(true);
+        }
+        Ok(false)
     }
 }
