@@ -430,6 +430,14 @@ impl BlockManager {
         Box::new(GetBlockIterator::new(Arc::clone(&self.state), block_ids))
     }
 
+    pub fn get_block_from_blockstore(
+        &self,
+        block_id: &str,
+        store_name: &str,
+    ) -> Result<Option<Block>, BlockManagerError> {
+        self.state.get_block_from_blockstore(block_id, store_name)
+    }
+
     pub fn branch(&self, tip: &str) -> Result<Box<Iterator<Item = Block>>, BlockManagerError> {
         Ok(Box::new(BranchIterator::new(
             Arc::clone(&self.state),
@@ -739,13 +747,11 @@ impl BranchDiffIterator {
             left_iterator
                 .peek()
                 .map(|left| {
-                    left.block_num as i64
-                        - right_iterator
-                            .peek()
-                            .map(|right| right.block_num as i64)
-                            .unwrap_or(0)
-                })
-                .unwrap_or(0)
+                    left.block_num as i64 - right_iterator
+                        .peek()
+                        .map(|right| right.block_num as i64)
+                        .unwrap_or(0)
+                }).unwrap_or(0)
         };
         if difference < 0 {
             // seek to the same height on the exclude side
