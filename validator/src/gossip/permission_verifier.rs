@@ -25,7 +25,17 @@ pub trait PermissionVerifier: Sync + Send {
         -> bool;
 }
 
-impl PermissionVerifier for cpython::PyObject {
+pub struct PyPermissionVerifier {
+    verifier: cpython::PyObject,
+}
+
+impl PyPermissionVerifier {
+    pub fn new(verifier: cpython::PyObject) -> Self {
+        PyPermissionVerifier { verifier }
+    }
+}
+
+impl PermissionVerifier for PyPermissionVerifier {
     fn is_batch_signer_authorized(
         &self,
         batch: &Batch,
@@ -35,12 +45,14 @@ impl PermissionVerifier for cpython::PyObject {
         let gil = cpython::Python::acquire_gil();
         let py = gil.python();
 
-        self.call_method(
-            py,
-            "is_batch_signer_authorized",
-            (batch, state_root, from_state),
-            None,
-        ).expect("PermissionVerifier has not method `is_batch_signer_authorized`")
+        self.verifier
+            .call_method(
+                py,
+                "is_batch_signer_authorized",
+                (batch, state_root, from_state),
+                None,
+            )
+            .expect("PermissionVerifier has not method `is_batch_signer_authorized`")
             .extract(py)
             .expect("Unable to extract bool from `is_batch_signer_authorized`")
     }
