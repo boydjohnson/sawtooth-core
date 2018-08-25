@@ -19,6 +19,7 @@ use std::sync::{mpsc::Sender, Arc};
 
 use cpython;
 use cpython::{FromPyObject, ObjectProtocol, PyObject, Python};
+use uluru;
 
 use batch::Batch;
 use block::Block;
@@ -32,11 +33,63 @@ use journal::validation_rule_enforcer::enforce_validation_rules;
 use scheduler::TxnExecutionResult;
 use state::{settings_view::SettingsView, state_view_factory::StateViewFactory};
 
+const BLOCK_VALIDATION_RESULT_CACHE_SIZE: usize = 512;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ValidationError {
     BlockValidationFailure(String),
     BlockValidationError(String),
     BlockStoreUpdated,
+}
+
+type BlockValidationResultCache =
+    uluru::LRUCache<[uluru::Entry<BlockValidationResult>; BLOCK_VALIDATION_RESULT_CACHE_SIZE]>;
+
+#[derive(Clone)]
+pub struct BlockValidationResultStore {
+    validation_result_cache: Arc<Mutex<BlockValidationResultCache>>,
+}
+
+impl BlockValidationResultStore {
+    pub fn new() -> Self {
+        BlockValidationResultStore {
+            validation_result_cache: Arc::new(Mutex::new(BlockValidationResultCache::default())),
+        }
+    }
+
+    pub fn insert(&self, result: BlockValidationResult) {
+        self.validation_result_cache
+            .lock()
+            .expect("The mutex is poisoned")
+            .insert(result)
+    }
+
+    pub fn get(&self, block_id: &str) -> Option<BlockValidationResult> {
+        self.validation_result_cache
+            .lock()
+            .expect("The mutex is poisoned")
+            .find(|r| &r.block_id == block_id)
+            .cloned()
+    }
+
+    pub fn fail_block(&self, block_id: &str) {
+        self.validation_result_cache
+            .lock()
+            .expect("The mutex is poisoned")
+            .find(|r| &r.block_id == block_id)
+            .map(|r| r.status = BlockStatus::Invalid);
+    }
+}
+
+impl BlockStatusStore for BlockValidationResultStore {
+    fn status(&self, block_id: &str) -> BlockStatus {
+        self.validation_result_cache
+            .lock()
+            .expect("The mutex is poisoned")
+            .find(|r| &r.block_id == block_id)
+            .map(|r| r.status.clone())
+            .unwrap_or(BlockStatus::Unknown)
+    }
 }
 
 impl From<ChainCommitStateError> for ValidationError {
