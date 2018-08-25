@@ -298,8 +298,8 @@ mod test {
     /// chain1          B2-1 - B3-1- B4-1 -- B5-1
     ///               /
     /// chain0    B0-B1-B2 - B3 -- B4 ---  B5
-    ///                    \
-    /// chain2               B3-2 - B4-2 -- B5-2
+    ///               \    \
+    /// chain2         B2-x B3-2 - B4-2 -- B5-2
     ///                          \
     /// chain3                      B4-3 -- B5-3
     ///
@@ -319,6 +319,16 @@ mod test {
 
         let mut previous_block_id = "B1";
         let chain1 = ["B2-1", "B3-1", "B4-1", "B5-1"]
+            .iter()
+            .map(|ref mut block_id| {
+                let block = create_block_w_batches_txns(previous_block_id, block_id);
+                previous_block_id = block_id;
+                block
+            })
+            .collect();
+
+        let mut previous_block_id = "B1";
+        let chainx = ["B2-X"]
             .iter()
             .map(|ref mut block_id| {
                 let block = create_block_w_batches_txns(previous_block_id, block_id);
