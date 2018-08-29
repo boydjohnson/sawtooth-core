@@ -419,16 +419,15 @@ impl MerkleDatabase {
             let node = {
                 // this is safe to unwrap, because we've just inserted the path in the previous loop
                 let child_address = &nodes[&path].children.get(&token.to_string());
-                if !new_branch && child_address.is_some() {
-                    get_node_by_hash(&self.db, child_address.unwrap())?
-                } else {
-                    if strict {
-                        return Err(StateDatabaseError::NotFound(format!(
+
+                match (!new_branch && child_address.is_some(), strict) {
+                    (true, _) => get_node_by_hash(&self.db, child_address.unwrap())?,
+                    (false, true) => return Err(StateDatabaseError::NotFound(format!(
                             "invalid address {} from root {}",
                             tokens.join(""),
                             self.root_hash
-                        )));
-                    } else {
+                        ))),
+                    (false, false) => {
                         new_branch = true;
                         Node::default()
                     }
