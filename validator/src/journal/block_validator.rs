@@ -342,8 +342,7 @@ where
                         }
                     }
                 }
-            })
-            .expect("The background thread had an error");
+            }).expect("The background thread had an error");
     }
 
     pub fn start(&mut self) {
@@ -460,8 +459,7 @@ impl<
                 .map(|s| {
                     let (tx, _) = s;
                     (tx.clone(), None)
-                })
-                .collect(),
+                }).collect(),
             index,
             transaction_executor,
             validation_thread_exit,
@@ -544,6 +542,7 @@ impl<
     }
 
     fn validate_block(&self, block: &Block) -> Result<BlockValidationResult, ValidationError> {
+        info_time!("Block Validator validate block");
         let previous_blocks_state_hash = self
             .block_manager
             .get(&[&block.previous_block_id])
@@ -560,8 +559,7 @@ impl<
                         "There was an error reading from the BlockStore: {:?}",
                         err
                     ))
-                })?
-                .next()
+                })?.next()
                 .map(|b| b.header_signature.clone());
             let mut dependent_checks = vec![];
             for validation in &self.dependent_validations {
@@ -623,6 +621,10 @@ impl<TEP: ExecutionPlatform> BlockValidation for BatchesInBlockValidation<TEP> {
         block: &Block,
         previous_state_root: Option<&String>,
     ) -> Result<BlockValidationResult, ValidationError> {
+        info_time!(
+            "Block Validator transaction execution took on block with {} batches",
+            &block.batches.len()
+        );
         let ending_state_hash = &block.state_root_hash;
         let null_state_hash = NULL_STATE_HASH.into();
         let state_root = previous_state_root.unwrap_or(&null_state_hash);
@@ -673,8 +675,7 @@ impl<TEP: ExecutionPlatform> BlockValidation for BatchesInBlockValidation<TEP> {
                     "During call to scheduler.complete: {:?}",
                     err
                 ))
-            })?
-            .ok_or_else(|| {
+            })?.ok_or_else(|| {
                 ValidationError::BlockValidationFailure(format!(
                     "Block {} failed validation: no execution results produced",
                     &block.header_signature
@@ -757,6 +758,7 @@ impl<B: BatchIndex, T: TransactionIndex, BS: BlockStore> BlockValidation
     type ReturnValue = ();
 
     fn validate_block(&self, block: &Block, _: Option<&String>) -> Result<(), ValidationError> {
+        info_time!("Block Validator duplicates and dependencies validation");
         let chain_commit_state = ChainCommitState::new(
             &block.previous_block_id,
             &self.block_manager,
@@ -813,6 +815,7 @@ impl<PV: PermissionVerifier> BlockValidation for PermissionValidation<PV> {
         block: &Block,
         prev_state_root: Option<&String>,
     ) -> Result<(), ValidationError> {
+        info_time!("Block Validator permission verifier validation");
         if block.block_num != 0 {
             let state_root = prev_state_root.ok_or_else(|| {
                 ValidationError::BlockValidationError(
@@ -854,6 +857,7 @@ impl BlockValidation for OnChainRulesValidation {
         block: &Block,
         prev_state_root: Option<&String>,
     ) -> Result<(), ValidationError> {
+        info_time!("Block Validator on chain rules validation");
         if block.block_num != 0 {
             let state_root = prev_state_root.ok_or_else(|| {
                 ValidationError::BlockValidationError(
@@ -903,8 +907,7 @@ impl<BS: BlockStore> BlockStoreUpdatedCheck for ChainHeadCheck<BS> {
                     "There was an error reading from the BlockStore: {:?}",
                     err
                 ))
-            })?
-            .next()
+            })?.next()
             .map(|b| b.header_signature.clone());
 
         if chain_head.as_ref() != original_chain_head {

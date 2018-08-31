@@ -420,8 +420,7 @@ impl SyncBlockPublisher {
             .call_method(py, "send", (block, injected_batches), None)
             .map_err(|py_err| {
                 ::pylogger::exception(py, "{:?}", py_err);
-            })
-            .expect("BlockSender.send() raised an exception");
+            }).expect("BlockSender.send() raised an exception");
 
         let mut blocks_published_count =
             COLLECTOR.counter("BlockPublisher.blocks_published_count", None, None);
@@ -452,6 +451,7 @@ impl SyncBlockPublisher {
     }
 
     pub fn on_batch_received(&self, batch: Batch) {
+        info_time!("publisher on_batch_received");
         let mut state = self.state.write().expect("Lock should not be poisoned");
         for observer in &self.batch_observers {
             let gil = Python::acquire_gil();
@@ -574,13 +574,13 @@ impl BlockPublisher {
                     }
                 }
                 warn!("PublisherThread exiting");
-            })
-            .unwrap();
+            }).unwrap();
 
         batch_tx
     }
 
     pub fn cancel_block(&self) -> Result<(), CancelBlockError> {
+        info_time!("publisher cancel_block");
         let mut state = self.publisher.state.write().expect("RwLock was poisoned");
         if state.candidate_block.is_some() {
             self.publisher.cancel_block(&mut state, true);
@@ -599,6 +599,7 @@ impl BlockPublisher {
     }
 
     pub fn initialize_block(&self, previous_block: &Block) -> Result<(), InitializeBlockError> {
+        info_time!("publisher initialize_block");
         let mut state = self.publisher.state.write().expect("RwLock was poisoned");
         self.publisher
             .initialize_block(&mut state, previous_block, true)
@@ -609,12 +610,14 @@ impl BlockPublisher {
         consensus_data: &[u8],
         force: bool,
     ) -> Result<String, FinalizeBlockError> {
+        info_time!("publisher finalize_block");
         let mut state = self.publisher.state.write().expect("RwLock is poisoned");
         self.publisher
             .finalize_block(&mut state, consensus_data, force)
     }
 
     pub fn summarize_block(&self, force: bool) -> Result<Vec<u8>, FinalizeBlockError> {
+        info_time!("publisher summarize_block");
         let mut state = self.publisher.state.write().expect("RwLock is poisoned");
         self.publisher.summarize_block(&mut state, force)
     }
@@ -689,6 +692,7 @@ impl IncomingBatchSender {
         IncomingBatchSender { ids, sender }
     }
     pub fn put(&mut self, batch: Batch) -> Result<(), BatchQueueError> {
+        info!("publisher incoming_batch_sender send");
         let mut ids = self
             .ids
             .write()

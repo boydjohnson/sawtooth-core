@@ -394,6 +394,7 @@ impl<
         // Only need a read lock to check duplicates, but need to upgrade to write lock for
         // updating chain head.
         {
+            info_time!("chain controller on_block_received");
             let mut state = self
                 .state
                 .write()
@@ -450,6 +451,10 @@ impl<
         };
 
         if let Some(block) = block {
+            info!(
+                "During on block received, block with {} batches",
+                block.batches.len()
+            );
             let mut state = self
                 .state
                 .write()
@@ -560,6 +565,7 @@ impl<
     }
 
     fn on_block_validated(&self, block: &Block, result: &BlockValidationResult) {
+        info_time!("chain controller on_block_validated");
         let mut blocks_considered_count =
             COLLECTOR.counter("ChainController.blocks_considered_count", None, None);
         blocks_considered_count.inc();
@@ -599,6 +605,7 @@ impl<
 
     fn handle_block_commit(&mut self, block: &Block) -> Result<(), ChainControllerError> {
         {
+            info_time!("chain controller handle_block_commit");
             // only hold this lock as long as the loop is active.
             let mut state = self
                 .state
@@ -612,8 +619,7 @@ impl<
                     .map_err(|err| {
                         error!("Error reading chain head: {:?}", err);
                         err
-                    })?
-                    .expect(
+                    })?.expect(
                         "Attempting to handle block commit before a genesis block has been
                         committed",
                     );
@@ -672,8 +678,7 @@ impl<
                     .persist(
                         &state.chain_head.as_ref().unwrap().header_signature,
                         COMMIT_STORE,
-                    )
-                    .map_err(|err| {
+                    ).map_err(|err| {
                         error!("Error persisting new chain head: {:?}", err);
                         err
                     })?;
@@ -822,6 +827,7 @@ impl<
     }
 
     pub fn queue_block(&self, block_id: &str) {
+        info!("chain controller queue_block");
         if self.block_queue_sender.is_some() {
             let sender = self.block_queue_sender.clone();
             if let Err(err) = sender.as_ref().unwrap().send(block_id.into()) {
@@ -896,8 +902,7 @@ impl<
                     if let Err(err) = chain_thread.run() {
                         error!("Error occurred during ChainController loop: {:?}", err);
                     }
-                })
-                .unwrap();
+                }).unwrap();
 
             self.start_validation_result_thread(exit_flag.clone(), validation_result_receiver);
             self.start_commit_queue_thread(exit_flag.clone(), commit_queue_receiver);
@@ -941,8 +946,7 @@ impl<
                 } else {
                     break;
                 }
-            })
-            .unwrap();
+            }).unwrap();
     }
 
     fn start_commit_queue_thread(
@@ -983,8 +987,7 @@ impl<
                 } else {
                     break;
                 }
-            })
-            .unwrap();
+            }).unwrap();
     }
 
     pub fn stop(&mut self) {
