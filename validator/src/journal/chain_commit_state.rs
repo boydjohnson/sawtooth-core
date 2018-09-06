@@ -128,6 +128,8 @@ impl<'b, 't, B: BatchIndex + 'b, T: TransactionIndex + 't> ChainCommitState<'b, 
         &self,
         batch_ids: Vec<String>,
     ) -> Result<(), ChainCommitStateError> {
+        info_time!("validate_no_duplicate_batches");
+
         if let Some(batch_id) = check_no_duplicates(batch_ids.as_slice()) {
             return Err(ChainCommitStateError::DuplicateBatch(batch_id));
         }
@@ -160,6 +162,7 @@ impl<'b, 't, B: BatchIndex + 'b, T: TransactionIndex + 't> ChainCommitState<'b, 
         &self,
         transaction_ids: Vec<String>,
     ) -> Result<(), ChainCommitStateError> {
+        info_time!("validate_no_duplicate_transactions");
         if let Some(txn_id) = check_no_duplicates(transaction_ids.as_slice()) {
             return Err(ChainCommitStateError::DuplicateTransaction(txn_id));
         }
@@ -192,6 +195,7 @@ impl<'b, 't, B: BatchIndex + 'b, T: TransactionIndex + 't> ChainCommitState<'b, 
         self,
         transactions: &[Transaction],
     ) -> Result<(), ChainCommitStateError> {
+        info_time!("validate_transaction_dependencies");
         let mut dependencies = vec![];
         let mut txn_ids = vec![];
         for txn in transactions {
