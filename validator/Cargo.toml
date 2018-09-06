@@ -12,6 +12,7 @@ log = { version = "0.4", features = ["std"] }
 libc = ">=0.2.35"
 lmdb-zero = ">=0.4.1"
 measure_time = "0.6"
+time = "0.1"
 cbor-codec = "0.7"
 protobuf = "2.0"
 python3-sys = "0.2"

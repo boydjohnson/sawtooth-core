@@ -31,6 +31,7 @@ extern crate lazy_static;
 extern crate log;
 #[cfg(test)]
 extern crate rand;
+extern crate time;
 extern crate uluru;
 
 // exported modules

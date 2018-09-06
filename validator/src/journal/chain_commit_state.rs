@@ -19,6 +19,7 @@ use std::collections::HashSet;
 
 use cpython;
 use cpython::ObjectProtocol;
+use time::precise_time_ns;
 
 use batch::Batch;
 use block::Block;
@@ -65,12 +66,20 @@ impl<'b, 't, B: BatchIndex + 'b, T: TransactionIndex + 't> ChainCommitState<'b, 
         let mut uncommitted_txn_ids = vec![];
         let mut common_ancestor = None;
         if branch_head_id != NULL_BLOCK_IDENTIFIER {
+            let mut bm_time = precise_time_ns();
+
             for block in block_manager.branch(branch_head_id).map_err(|err| {
                 ChainCommitStateError::Error(format!(
                     "Error getting branch from block manager: {:?}",
                     err
                 ))
             })? {
+                info!(
+                    "block_manager_branch_next took {}ns",
+                    precise_time_ns() - bm_time,
+                );
+
+                let bs_time = precise_time_ns();
                 let chain_head = block_store
                     .get(&[&block.header_signature])
                     .map_err(|err| {
@@ -78,9 +87,11 @@ impl<'b, 't, B: BatchIndex + 'b, T: TransactionIndex + 't> ChainCommitState<'b, 
                             "Error getting block from blockstore: {:?}",
                             err
                         ))
-                    })?
-                    .next();
-
+                    })?.next();
+                info!(
+                    "block_store_chain_head took {}ns",
+                    precise_time_ns() - bs_time,
+                );
                 if chain_head.is_some() {
                     common_ancestor = Some(block);
                     break;
@@ -93,6 +104,8 @@ impl<'b, 't, B: BatchIndex + 'b, T: TransactionIndex + 't> ChainCommitState<'b, 
                         }
                     }
                 }
+
+                bm_time = precise_time_ns();
             }
         }
         Ok(ChainCommitState {
@@ -304,8 +317,7 @@ mod test {
                 previous_block_id = block_id;
                 block_num += 1;
                 block
-            })
-            .collect();
+            }).collect();
 
         let mut previous_block_id = "B1";
         let mut block_num = 2;
@@ -316,8 +328,7 @@ mod test {
                 previous_block_id = block_id;
                 block_num += 1;
                 block
-            })
-            .collect();
+            }).collect();
 
         let mut previous_block_id = "B3-1";
         let mut block_num = 4;
@@ -328,8 +339,7 @@ mod test {
                 previous_block_id = block_id;
                 block_num += 1;
                 block
-            })
-            .collect();
+            }).collect();
 
         let mut previous_block_id = "B2";
         let mut block_num = 3;
@@ -339,8 +349,7 @@ mod test {
                 let block = create_block_w_batches_txns(block_id, previous_block_id, block_num);
                 previous_block_id = block_id;
                 block
-            })
-            .collect();
+            }).collect();
 
         let mut previous_block_id = "B3-2";
         let mut block_num = 4;
@@ -350,8 +359,7 @@ mod test {
                 let block = create_block_w_batches_txns(block_id, previous_block_id, block_num);
                 previous_block_id = block_id;
                 block
-            })
-            .collect();
+            }).collect();
         vec![chain0, chain1, chain4, chain2, chain3]
     }
 
@@ -791,11 +799,9 @@ mod test {
                     .map(|t_id: &str| {
                         let txn_id = format!("{}{}", batch_header_signature, t_id);
                         create_transaction(txn_id, vec![])
-                    })
-                    .collect();
+                    }).collect();
                 create_batch(batch_header_signature, txns)
-            })
-            .collect();
+            }).collect();
 
         let block = create_block(block_id, previous_block_id, block_num, batches);
 
