@@ -466,7 +466,7 @@ trait StateBlockValidation {
 /// A generic block validation. Returns a ValidationError::BlockValidationFailure on
 /// validation failure. It is a dependent validation if it can return
 /// ValidationError::BlockStoreUpdated and is an independent validation otherwise
-trait BlockValidation: Send {
+pub trait BlockValidation: Send {
     type ReturnValue;
 
     fn validate_block(
@@ -639,12 +639,12 @@ impl<TEP: ExecutionPlatform> BlockValidation for BatchesInBlockValidation<TEP> {
     }
 }
 
-struct DuplicatesAndDependenciesValidation {
+pub struct DuplicatesAndDependenciesValidation {
     block_manager: BlockManager,
 }
 
 impl DuplicatesAndDependenciesValidation {
-    fn new(block_manager: BlockManager) -> Self {
+    pub fn new(block_manager: BlockManager) -> Self {
         DuplicatesAndDependenciesValidation { block_manager }
     }
 }
