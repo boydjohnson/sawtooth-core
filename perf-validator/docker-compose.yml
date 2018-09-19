@@ -1,0 +1,13 @@
+version: '3.6'
+
+services:
+  bench:
+    build:
+      context: .
+    image: bench
+    environment:
+      PYTHONPATH: ../validator
+      RUST_BACKTRACE: full
+    volumes:
+      - ..:/project
+    command: "/root/.cargo/bin/cargo bench"

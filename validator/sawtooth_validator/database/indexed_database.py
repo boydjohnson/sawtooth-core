@@ -18,6 +18,7 @@ import os
 import lmdb
 
 from sawtooth_validator.database import database
+from sawtooth_validator.journal.block_store import BlockStore
 
 
 LOGGER = logging.getLogger(__name__)
@@ -37,9 +38,9 @@ class IndexedDatabase(database.Database):
     It must be provided with a serializer and a deserializer.
     """
 
-    def __init__(self, filename, serializer, deserializer,
-                 indexes=None,
-                 flag=None,
+    def __init__(self, filename, serializer=BlockStore.serialize_block, deserializer=BlockStore.deserialize_block,
+                 indexes=BlockStore.create_index_configuration(),
+                 flag="c",
                  _size=DEFAULT_SIZE):
         """Constructor for the IndexedDatabase class.
 

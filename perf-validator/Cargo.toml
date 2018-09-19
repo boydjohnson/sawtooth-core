@@ -1,0 +1,13 @@
+[package]
+name = "perf-validator"
+version = "0.1.0"
+authors = ["Boyd Johnson <bjohnson@bitwise.io>"]
+
+[dependencies]
+sawtooth_validator = { path = "../validator" }
+sawtooth-smallbank-workload = { path = "../perf/smallbank_workload" }
+sawtooth_perf = { path = "../perf/sawtooth_perf" }
+sawtooth_sdk = { path = "../sdk/rust" }
+protobuf = "2"
+cpython = "0.2"
+lazy_static = "1.1"
