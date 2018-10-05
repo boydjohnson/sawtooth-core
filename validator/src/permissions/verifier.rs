@@ -17,8 +17,8 @@
 use batch::Batch;
 use transaction::Transaction;
 
-use permissions::{IdentitySource, Permission, Policy, Role};
 use permissions::error::IdentityError;
+use permissions::{IdentitySource, Permission, Policy, Role};
 
 // Roles
 const ROLE_TRANSACTOR: &str = "transactor";
@@ -239,8 +239,8 @@ mod tests {
     use std::collections::HashMap;
 
     use batch::Batch;
-    use permissions::{IdentitySource, Permission, Policy, Role};
     use permissions::error::IdentityError;
+    use permissions::{IdentitySource, Permission, Policy, Role};
     use transaction::Transaction;
 
     #[test]
@@ -257,7 +257,11 @@ mod tests {
             Box::new(TestIdentitySource::default()),
         );
 
-        assert!(permission_verifier.is_batch_signer_authorized(&batch).unwrap());
+        assert!(
+            permission_verifier
+                .is_batch_signer_authorized(&batch)
+                .unwrap()
+        );
     }
 
     #[test]
@@ -277,7 +281,11 @@ mod tests {
                 vec![Permission::PermitKey("*".into())],
             ));
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(permission_verifier.is_batch_signer_authorized(&batch).unwrap());
+            assert!(
+                permission_verifier
+                    .is_batch_signer_authorized(&batch)
+                    .unwrap()
+            );
         }
 
         {
@@ -287,7 +295,11 @@ mod tests {
                 vec![Permission::DenyKey("*".into())],
             ));
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(!permission_verifier.is_batch_signer_authorized(&batch).unwrap());
+            assert!(
+                !permission_verifier
+                    .is_batch_signer_authorized(&batch)
+                    .unwrap()
+            );
         }
     }
 
@@ -308,7 +320,11 @@ mod tests {
             on_chain_identities.add_role(Role::new("transactor", "policy1"));
 
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(permission_verifier.is_batch_signer_authorized(&batch).unwrap());
+            assert!(
+                permission_verifier
+                    .is_batch_signer_authorized(&batch)
+                    .unwrap()
+            );
         }
         {
             let mut on_chain_identities = TestIdentitySource::default();
@@ -319,7 +335,11 @@ mod tests {
             on_chain_identities.add_role(Role::new("transactor", "policy1"));
 
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(!permission_verifier.is_batch_signer_authorized(&batch).unwrap());
+            assert!(
+                !permission_verifier
+                    .is_batch_signer_authorized(&batch)
+                    .unwrap()
+            );
         }
     }
 
@@ -340,7 +360,11 @@ mod tests {
             on_chain_identities.add_role(Role::new("transactor.batch_signer", "policy1"));
 
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(permission_verifier.is_batch_signer_authorized(&batch).unwrap());
+            assert!(
+                permission_verifier
+                    .is_batch_signer_authorized(&batch)
+                    .unwrap()
+            );
         }
         {
             let mut on_chain_identities = TestIdentitySource::default();
@@ -351,7 +375,11 @@ mod tests {
             on_chain_identities.add_role(Role::new("transactor.batch_signer", "policy1"));
 
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(!permission_verifier.is_batch_signer_authorized(&batch).unwrap());
+            assert!(
+                !permission_verifier
+                    .is_batch_signer_authorized(&batch)
+                    .unwrap()
+            );
         }
     }
 
@@ -372,7 +400,11 @@ mod tests {
             on_chain_identities.add_role(Role::new("transactor.transaction_signer", "policy1"));
 
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(permission_verifier.is_batch_signer_authorized(&batch).unwrap());
+            assert!(
+                permission_verifier
+                    .is_batch_signer_authorized(&batch)
+                    .unwrap()
+            );
         }
         {
             let mut on_chain_identities = TestIdentitySource::default();
@@ -383,7 +415,11 @@ mod tests {
             on_chain_identities.add_role(Role::new("transactor.transaction_signer", "policy1"));
 
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(!permission_verifier.is_batch_signer_authorized(&batch).unwrap());
+            assert!(
+                !permission_verifier
+                    .is_batch_signer_authorized(&batch)
+                    .unwrap()
+            );
         }
     }
 
@@ -405,7 +441,11 @@ mod tests {
                 .add_role(Role::new("transactor.transaction_signer.intkey", "policy1"));
 
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(permission_verifier.is_batch_signer_authorized(&batch).unwrap());
+            assert!(
+                permission_verifier
+                    .is_batch_signer_authorized(&batch)
+                    .unwrap()
+            );
         }
         {
             let mut on_chain_identities = TestIdentitySource::default();
@@ -417,7 +457,11 @@ mod tests {
                 .add_role(Role::new("transactor.transaction_signer.intkey", "policy1"));
 
             let permission_verifier = on_chain_verifier(on_chain_identities);
-            assert!(!permission_verifier.is_batch_signer_authorized(&batch).unwrap());
+            assert!(
+                !permission_verifier
+                    .is_batch_signer_authorized(&batch)
+                    .unwrap()
+            );
         }
     }
 
@@ -429,7 +473,11 @@ mod tests {
 
         let permission_verifier = off_chain_verifier(TestIdentitySource::default());
 
-        assert!(permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
+        assert!(
+            permission_verifier
+                .check_off_chain_batch_roles(&batch)
+                .unwrap()
+        );
     }
 
     #[test]
@@ -449,7 +497,11 @@ mod tests {
             off_chain_identities.add_role(Role::new("transactor", "policy1"));
 
             let permission_verifier = off_chain_verifier(off_chain_identities);
-            assert!(permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
+            assert!(
+                permission_verifier
+                    .check_off_chain_batch_roles(&batch)
+                    .unwrap()
+            );
         }
         {
             let mut off_chain_identities = TestIdentitySource::default();
@@ -460,7 +512,11 @@ mod tests {
             off_chain_identities.add_role(Role::new("transactor", "policy1"));
 
             let permission_verifier = off_chain_verifier(off_chain_identities);
-            assert!(!permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
+            assert!(
+                !permission_verifier
+                    .check_off_chain_batch_roles(&batch)
+                    .unwrap()
+            );
         }
     }
 
@@ -481,7 +537,11 @@ mod tests {
             off_chain_identities.add_role(Role::new("transactor.batch_signer", "policy1"));
 
             let permission_verifier = off_chain_verifier(off_chain_identities);
-            assert!(permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
+            assert!(
+                permission_verifier
+                    .check_off_chain_batch_roles(&batch)
+                    .unwrap()
+            );
         }
         {
             let mut off_chain_identities = TestIdentitySource::default();
@@ -492,7 +552,11 @@ mod tests {
             off_chain_identities.add_role(Role::new("transactor.batch_signer", "policy1"));
 
             let permission_verifier = off_chain_verifier(off_chain_identities);
-            assert!(!permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
+            assert!(
+                !permission_verifier
+                    .check_off_chain_batch_roles(&batch)
+                    .unwrap()
+            );
         }
     }
 
@@ -513,7 +577,11 @@ mod tests {
             off_chain_identities.add_role(Role::new("transactor.transaction_signer", "policy1"));
 
             let permission_verifier = off_chain_verifier(off_chain_identities);
-            assert!(permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
+            assert!(
+                permission_verifier
+                    .check_off_chain_batch_roles(&batch)
+                    .unwrap()
+            );
         }
         {
             let mut off_chain_identities = TestIdentitySource::default();
@@ -524,7 +592,11 @@ mod tests {
             off_chain_identities.add_role(Role::new("transactor.transaction_signer", "policy1"));
 
             let permission_verifier = off_chain_verifier(off_chain_identities);
-            assert!(!permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
+            assert!(
+                !permission_verifier
+                    .check_off_chain_batch_roles(&batch)
+                    .unwrap()
+            );
         }
     }
 
@@ -546,7 +618,11 @@ mod tests {
                 .add_role(Role::new("transactor.transaction_signer.intkey", "policy1"));
 
             let permission_verifier = off_chain_verifier(off_chain_identities);
-            assert!(permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
+            assert!(
+                permission_verifier
+                    .check_off_chain_batch_roles(&batch)
+                    .unwrap()
+            );
         }
         {
             let mut off_chain_identities = TestIdentitySource::default();
@@ -558,7 +634,11 @@ mod tests {
                 .add_role(Role::new("transactor.transaction_signer.intkey", "policy1"));
 
             let permission_verifier = off_chain_verifier(off_chain_identities);
-            assert!(!permission_verifier.check_off_chain_batch_roles(&batch).unwrap());
+            assert!(
+                !permission_verifier
+                    .check_off_chain_batch_roles(&batch)
+                    .unwrap()
+            );
         }
     }
 
@@ -591,8 +671,7 @@ mod tests {
                 payload_sha512: format!("nonesense-{}", i),
                 header_bytes: vec![],
                 nonce: format!("{}", i),
-            })
-            .collect()
+            }).collect()
     }
 
     fn create_batches(count: usize, txns_per_batch: usize, pub_key: &str) -> Vec<Batch> {
@@ -611,8 +690,7 @@ mod tests {
                     header_bytes: vec![],
                     trace: false,
                 }
-            })
-            .collect()
+            }).collect()
     }
 
     #[derive(Default)]

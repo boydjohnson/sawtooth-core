@@ -14,10 +14,15 @@
  * limitations under the License.
  * ------------------------------------------------------------------------------
  */
+
 pub mod error;
 pub mod verifier;
 
 use permissions::error::IdentityError;
+use proto::identity::Policy as ProtoPolicy;
+use proto::identity::Policy_Entry;
+use proto::identity::Policy_EntryType;
+use proto::identity::Role as ProtoRole;
 
 pub enum Permission {
     PermitKey(String),
@@ -61,6 +66,33 @@ impl Role {
 }
 
 pub trait IdentitySource: Sync + Send {
-    fn get_role(&self, name: &str) -> Result<Option<&Role>, IdentityError>;
-    fn get_policy(&self, name: &str) -> Result<Option<&Policy>, IdentityError>;
+    fn get_role(&self, name: &str) -> Result<Option<Role>, IdentityError>;
+    fn get_policy(&self, name: &str) -> Result<Option<Policy>, IdentityError>;
+}
+
+impl From<ProtoRole> for Role {
+    fn from(other: ProtoRole) -> Self {
+        Role::new(other.name, other.policy_name)
+    }
+}
+
+impl From<ProtoPolicy> for Policy {
+    fn from(other: ProtoPolicy) -> Self {
+        Policy::new(
+            other.name,
+            other.entries.iter().map(|entry| entry.into()).collect(),
+        )
+    }
+}
+
+impl<'a> From<&'a Policy_Entry> for Permission {
+    fn from(other: &'a Policy_Entry) -> Self {
+        match other.field_type {
+            Policy_EntryType::PERMIT_KEY => Permission::PermitKey(other.key.clone()),
+            Policy_EntryType::DENY_KEY => Permission::DenyKey(other.key.clone()),
+            Policy_EntryType::ENTRY_TYPE_UNSET => {
+                panic!("A policy entry will not be UNSET for Policies in the IdentityView")
+            }
+        }
+    }
 }
