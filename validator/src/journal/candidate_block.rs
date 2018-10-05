@@ -19,21 +19,22 @@
 
 use std::collections::HashSet;
 
+use batch::Batch;
+use block::Block;
 use cpython;
 use cpython::ObjectProtocol;
 use cpython::PyClone;
 use cpython::Python;
-
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
-
-use batch::Batch;
-use block::Block;
-use transaction::Transaction;
-
 use journal::chain_commit_state::TransactionCommitCache;
 use journal::validation_rule_enforcer;
+use permissions::verifier::PermissionVerifier;
+use permissions::IdentitySource;
+use state::identity_view::IdentityView;
 use state::settings_view::SettingsView;
+use state::state_view_factory::StateViewFactory;
+use transaction::Transaction;
 
 use pylogger;
 
@@ -61,7 +62,7 @@ pub struct CandidateBlock {
     block_builder: cpython::PyObject,
     batch_injectors: Vec<cpython::PyObject>,
     identity_signer: cpython::PyObject,
-    settings_view: SettingsView,
+    state_view_factory: StateViewFactory,
 
     summary: Option<Vec<u8>>,
     /// Batches remaining after the summary has been computed
@@ -86,7 +87,7 @@ impl CandidateBlock {
         max_batches: usize,
         batch_injectors: Vec<cpython::PyObject>,
         identity_signer: cpython::PyObject,
-        settings_view: SettingsView,
+        state_view_factory: StateViewFactory,
     ) -> Self {
         CandidateBlock {
             previous_block,
@@ -98,7 +99,7 @@ impl CandidateBlock {
             block_builder,
             batch_injectors,
             identity_signer,
-            settings_view,
+            state_view_factory,
             summary: None,
             remaining_batches: vec![],
             pending_batches: vec![],
@@ -113,6 +114,10 @@ impl CandidateBlock {
 
     pub fn previous_block_id(&self) -> String {
         self.previous_block.header_signature.clone()
+    }
+
+    pub fn previous_state_hash<'a>(&self) -> String {
+        self.previous_block.state_root_hash.clone()
     }
 
     pub fn last_batch(&self) -> Option<&Batch> {
@@ -233,6 +238,21 @@ impl CandidateBlock {
     pub fn add_batch(&mut self, batch: Batch) {
         let batch_header_signature = batch.header_signature.clone();
 
+        let identity_view: IdentityView = self
+            .state_view_factory
+            .create_view(&self.previous_state_hash())
+            .expect("Unable to make identity view from previous block's state hash");
+        let identity_source: Box<IdentitySource> = Box::new(identity_view);
+        let permission_verifier = PermissionVerifier::with_on_chain_only(identity_source);
+        match permission_verifier.is_batch_signer_authorized(&batch) {
+            Ok(true) => (),
+            Err(err) => {
+                warn!("{:?}", err);
+                return;
+            }
+            _ => return,
+        }
+
         if batch.trace {
             debug!(
                 "TRACE {}: {}",
@@ -278,13 +298,17 @@ impl CandidateBlock {
             batches_to_add.push(batch);
 
             {
+                let settings_view: SettingsView = self
+                    .state_view_factory
+                    .create_view(&self.previous_state_hash())
+                    .expect("Unable to make settings view from previous blocks state root hash");
                 let batches_to_test = self
                     .pending_batches
                     .iter()
                     .chain(batches_to_add.iter())
                     .collect::<Vec<_>>();
                 if !validation_rule_enforcer::enforce_validation_rules(
-                    &self.settings_view,
+                    &settings_view,
                     &self.get_signer_public_key_hex(),
                     &batches_to_test,
                 ) {

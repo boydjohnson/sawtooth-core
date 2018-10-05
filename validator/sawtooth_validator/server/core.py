@@ -308,7 +308,6 @@ class Validator:
             identity_signer=identity_signer,
             data_dir=data_dir,
             config_dir=config_dir,
-            permission_verifier=permission_verifier,
             batch_observers=[batch_tracker],
             batch_injector_factory=batch_injector_factory)
 

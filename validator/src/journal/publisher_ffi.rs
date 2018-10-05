@@ -71,7 +71,6 @@ pub unsafe extern "C" fn block_publisher_new(
     identity_signer_ptr: *mut py_ffi::PyObject,
     data_dir_ptr: *mut py_ffi::PyObject,
     config_dir_ptr: *mut py_ffi::PyObject,
-    permission_verifier_ptr: *mut py_ffi::PyObject,
     batch_observers_ptr: *mut py_ffi::PyObject,
     batch_injector_factory_ptr: *mut py_ffi::PyObject,
     block_publisher_ptr: *mut *const c_void,
@@ -88,7 +87,6 @@ pub unsafe extern "C" fn block_publisher_new(
         identity_signer_ptr,
         data_dir_ptr,
         config_dir_ptr,
-        permission_verifier_ptr,
         batch_observers_ptr,
         batch_injector_factory_ptr
     );
@@ -108,7 +106,6 @@ pub unsafe extern "C" fn block_publisher_new(
     let identity_signer = PyObject::from_borrowed_ptr(py, identity_signer_ptr);
     let data_dir = PyObject::from_borrowed_ptr(py, data_dir_ptr);
     let config_dir = PyObject::from_borrowed_ptr(py, config_dir_ptr);
-    let permission_verifier = PyObject::from_borrowed_ptr(py, permission_verifier_ptr);
     let batch_observers = PyObject::from_borrowed_ptr(py, batch_observers_ptr);
     let batch_injector_factory = PyObject::from_borrowed_ptr(py, batch_injector_factory_ptr);
 
@@ -149,7 +146,6 @@ pub unsafe extern "C" fn block_publisher_new(
         identity_signer,
         data_dir,
         config_dir,
-        permission_verifier,
         batch_observers,
         batch_injector_factory,
     );

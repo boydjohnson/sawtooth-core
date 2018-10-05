@@ -37,6 +37,7 @@ use journal::candidate_block::{CandidateBlock, CandidateBlockError};
 use journal::chain_commit_state::TransactionCommitCache;
 use journal::chain_head_lock::ChainHeadLock;
 use metrics;
+use state::identity_view::IdentityView;
 use state::settings_view::SettingsView;
 use state::state_view_factory::StateViewFactory;
 
@@ -130,7 +131,6 @@ pub struct SyncBlockPublisher {
     identity_signer: PyObject,
     data_dir: PyObject,
     config_dir: PyObject,
-    permission_verifier: PyObject,
 
     exit: Arc<Exit>,
 }
@@ -154,7 +154,6 @@ impl Clone for SyncBlockPublisher {
             identity_signer: self.identity_signer.clone_ref(py),
             data_dir: self.data_dir.clone_ref(py),
             config_dir: self.config_dir.clone_ref(py),
-            permission_verifier: self.permission_verifier.clone_ref(py),
             exit: Arc::clone(&self.exit),
         }
     }
@@ -245,6 +244,11 @@ impl SyncBlockPublisher {
                 .create_view(&previous_block.state_root_hash)
                 .expect("Failed to get state view for previous block");
 
+            let identity_view: IdentityView = self
+                .state_view_factory
+                .create_view(&previous_block.state_root_hash)
+                .expect("Failed to get identity view for previous block");
+
             let max_batches = settings_view
                 .get_setting_u32("sawtooth.publisher.max_batches_per_block", Some(0u32))
                 .expect("Unable to get value from settings view")
@@ -292,7 +296,7 @@ impl SyncBlockPublisher {
                 max_batches,
                 batch_injectors,
                 self.identity_signer.clone_ref(py),
-                settings_view,
+                self.state_view_factory.clone(),
             )
         };
 
@@ -457,22 +461,11 @@ impl SyncBlockPublisher {
         for observer in &state.batch_observers {
             observer.notify_batch_pending(&batch);
         }
-        let permission_check = {
-            let gil = Python::acquire_gil();
-            let py = gil.python();
-            self.permission_verifier
-                .call_method(py, "is_batch_signer_authorized", (batch.clone(),), None)
-                .expect("PermissionVerifier has no method is_batch_signer_authorized")
-                .extract(py)
-                .expect("PermissionVerifier.is_batch_signer_authorized did not return bool")
-        };
 
-        if permission_check {
-            state.pending_batches.append(batch.clone());
-            if let Some(ref mut candidate_block) = state.candidate_block {
-                if candidate_block.can_add_batch() {
-                    candidate_block.add_batch(batch);
-                }
+        state.pending_batches.append(batch.clone());
+        if let Some(ref mut candidate_block) = state.candidate_block {
+            if candidate_block.can_add_batch() {
+                candidate_block.add_batch(batch);
             }
         }
     }
@@ -511,7 +504,6 @@ impl BlockPublisher {
         identity_signer: PyObject,
         data_dir: PyObject,
         config_dir: PyObject,
-        permission_verifier: PyObject,
         batch_observers: Vec<Box<BatchObserver>>,
         batch_injector_factory: PyObject,
     ) -> Self {
@@ -534,7 +526,7 @@ impl BlockPublisher {
             identity_signer,
             data_dir,
             config_dir,
-            permission_verifier,
+            batch_observers,
             batch_injector_factory,
             exit: Arc::new(Exit::new()),
         };
