@@ -19,12 +19,12 @@ use std::iter::repeat;
 
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
-use protobuf;
-
+use permissions;
 use proto::identity::Policy;
 use proto::identity::PolicyList;
 use proto::identity::Role;
 use proto::identity::RoleList;
+use protobuf;
 
 use state::StateDatabaseError;
 use state::StateReader;
@@ -51,6 +51,26 @@ impl From<StateDatabaseError> for IdentityViewError {
 impl From<protobuf::ProtobufError> for IdentityViewError {
     fn from(err: protobuf::ProtobufError) -> Self {
         IdentityViewError::EncodingError(err)
+    }
+}
+
+impl permissions::IdentitySource for IdentityView {
+    fn get_role(
+        &self,
+        name: &str,
+    ) -> Result<Option<&permissions::Role>, permissions::error::IdentityError> {
+        IdentityView::get_role(self, name)
+            .map_err(|err| permissions::error::IdentityError(format!("{:?}", err)))
+            .map(|role| role.as_ref())
+    }
+
+    fn get_policy(
+        &self,
+        name: &str,
+    ) -> Result<Option<&permissions::Policy>, permissions::error::IdentityError> {
+        IdentityView::get_policy(self, name)
+            .map_err(|err| permissions::error::IdentityError(format!("{:?}", err)))
+            .map(|role| role.as_ref())
     }
 }
 
