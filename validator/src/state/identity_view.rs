@@ -58,19 +58,19 @@ impl permissions::IdentitySource for IdentityView {
     fn get_role(
         &self,
         name: &str,
-    ) -> Result<Option<&permissions::Role>, permissions::error::IdentityError> {
+    ) -> Result<Option<permissions::Role>, permissions::error::IdentityError> {
         IdentityView::get_role(self, name)
-            .map_err(|err| permissions::error::IdentityError(format!("{:?}", err)))
-            .map(|role| role.as_ref())
+            .map_err(|err| permissions::error::IdentityError::ReadError(format!("{:?}", err)))
+            .map(|role| role.map(|r| r.into()))
     }
 
     fn get_policy(
         &self,
         name: &str,
-    ) -> Result<Option<&permissions::Policy>, permissions::error::IdentityError> {
+    ) -> Result<Option<permissions::Policy>, permissions::error::IdentityError> {
         IdentityView::get_policy(self, name)
-            .map_err(|err| permissions::error::IdentityError(format!("{:?}", err)))
-            .map(|role| role.as_ref())
+            .map_err(|err| permissions::error::IdentityError::ReadError(format!("{:?}", err)))
+            .map(|policy| policy.map(|p| p.into()))
     }
 }
 

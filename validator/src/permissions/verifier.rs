@@ -63,20 +63,20 @@ impl PermissionVerifier {
     /// The first role that is set will be the one used to enforce if the
     /// node is allowed.
     pub fn check_network_role(&self, public_key: &str) -> Result<bool, IdentityError> {
-        let policy_name: Option<&str> = self
+        let policy_name: Option<String> = self
             .on_chain_identities
             .get_role(ROLE_NETWORK)?
-            .map(|role| role.policy_name())
-            .or(Some(POLICY_DEFAULT));
+            .map(|role| role.policy_name().into())
+            .or(Some(POLICY_DEFAULT.into()));
 
-        let policy: Option<&Policy> = if let Some(name) = policy_name  {
+        let policy: Option<Policy> = if let Some(ref name) = policy_name {
             self.on_chain_identities.get_policy(name)?
         } else {
             None
         };
 
         let allowed = policy
-            .map(|policy| Self::is_allowed(public_key, policy))
+            .map(|policy| Self::is_allowed(public_key, &policy))
             .unwrap_or(true);
 
         if !allowed {
@@ -96,7 +96,11 @@ impl PermissionVerifier {
     /// The first role that is set will be the one used to enforce if the
     /// batch signer is allowed.
     pub fn is_batch_signer_authorized(&self, batch: &Batch) -> Result<bool, IdentityError> {
-        Self::is_batch_allowed(&*self.on_chain_identities, batch, Some(POLICY_DEFAULT))
+        Self::is_batch_allowed(
+            &*self.on_chain_identities,
+            batch,
+            Some(POLICY_DEFAULT.into()),
+        )
     }
 
     /// Check the batch signing key against the allowed transactor
@@ -114,26 +118,26 @@ impl PermissionVerifier {
     fn is_batch_allowed(
         identity_source: &IdentitySource,
         batch: &Batch,
-        default_policy: Option<&str>,
+        default_policy: Option<String>,
     ) -> Result<bool, IdentityError> {
-        let policy_name: Option<&str> = identity_source
+        let policy_name: Option<String> = identity_source
             .get_role(ROLE_BATCH_TRANSACTOR)
-            .and_then(|found| if found.is_some() {
-                Ok(found)
-            } else {
-                identity_source.get_role(ROLE_TRANSACTOR)
-            })?
-            .map(|role| role.policy_name())
-            .or(default_policy);
+            .and_then(|found| {
+                if found.is_some() {
+                    Ok(found)
+                } else {
+                    identity_source.get_role(ROLE_TRANSACTOR)
+                }
+            })?.map(|role| role.policy_name().into());
 
-        let policy = if let Some(name) = policy_name {
+        let policy = if let Some(name) = policy_name.as_ref().or(default_policy.as_ref()) {
             identity_source.get_policy(name)?
         } else {
             None
         };
 
         let allowed = policy
-            .map(|policy| Self::is_allowed(&batch.signer_public_key, policy))
+            .map(|policy| Self::is_allowed(&batch.signer_public_key, &policy))
             .unwrap_or(true);
 
         if !allowed {
@@ -141,7 +145,7 @@ impl PermissionVerifier {
                 "Batch Signer: {} is not permitted.",
                 &batch.signer_public_key
             );
-            return Ok(false)
+            return Ok(false);
         }
 
         Self::is_transaction_allowed(identity_source, &batch.transactions, default_policy)
@@ -161,35 +165,35 @@ impl PermissionVerifier {
     fn is_transaction_allowed(
         identity_source: &IdentitySource,
         transactions: &[Transaction],
-        default_policy: Option<&str>,
+        default_policy: Option<String>,
     ) -> Result<bool, IdentityError> {
-        let general_txn_policy_name: Option<&str> = identity_source
+        let general_txn_policy_name: Option<String> = identity_source
             .get_role(ROLE_TXN_TRANSACTOR)
-            .and_then(|found| if found.is_some() {
-                Ok(found)
-            } else {
-                identity_source.get_role(ROLE_TRANSACTOR)
-            })?
-            .map(|role| role.policy_name())
+            .and_then(|found| {
+                if found.is_some() {
+                    Ok(found)
+                } else {
+                    identity_source.get_role(ROLE_TRANSACTOR)
+                }
+            })?.map(|role| role.policy_name().into())
             .or(default_policy);
 
         for transaction in transactions {
-            let policy_name: Option<&str> = identity_source
+            let policy_name: Option<String> = identity_source
                 .get_role(&format!(
                     "{}.{}",
                     ROLE_TXN_TRANSACTOR, transaction.family_name
-                ))?
-                .map(|role| role.policy_name())
-                .or(general_txn_policy_name);
+                ))?.map(|role| role.policy_name().into());
 
-            let policy = if let Some(name) = policy_name {
-                identity_source.get_policy(name)?
-            } else {
-                None
-            };
+            let policy =
+                if let Some(name) = policy_name.as_ref().or(general_txn_policy_name.as_ref()) {
+                    identity_source.get_policy(name)?
+                } else {
+                    None
+                };
 
             if let Some(policy) = policy {
-                if !Self::is_allowed(&transaction.signer_public_key, policy) {
+                if !Self::is_allowed(&transaction.signer_public_key, &policy) {
                     debug!(
                         "Transaction Signer: {} is not permitted.",
                         &transaction.signer_public_key
@@ -224,11 +228,11 @@ impl PermissionVerifier {
 struct EmptyIdentitySource(u8);
 
 impl IdentitySource for EmptyIdentitySource {
-    fn get_role(&self, _name: &str) -> Result<Option<&Role>, IdentityError> {
+    fn get_role(&self, _name: &str) -> Result<Option<Role>, IdentityError> {
         Ok(None)
     }
 
-    fn get_policy(&self, _name: &str) -> Result<Option<&Policy>, IdentityError> {
+    fn get_policy(&self, _name: &str) -> Result<Option<Policy>, IdentityError> {
         Ok(None)
     }
 }

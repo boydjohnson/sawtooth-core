@@ -90,9 +90,9 @@ impl<'a> From<&'a Policy_Entry> for Permission {
         match other.field_type {
             Policy_EntryType::PERMIT_KEY => Permission::PermitKey(other.key.clone()),
             Policy_EntryType::DENY_KEY => Permission::DenyKey(other.key.clone()),
-            Policy_EntryType::ENTRY_TYPE_UNSET => {
-                panic!("A policy entry will not be UNSET for Policies in the IdentityView")
-            }
+            Policy_EntryType::ENTRY_TYPE_UNSET => panic!(
+                "A policy entry will not be ENTRY_TYPE_UNSET for Policies in the IdentityView"
+            ),
         }
     }
 }
