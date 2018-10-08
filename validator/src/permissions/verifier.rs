@@ -714,12 +714,12 @@ mod tests {
     }
 
     impl IdentitySource for TestIdentitySource {
-        fn get_role(&self, name: &str) -> Result<Option<&Role>, IdentityError> {
-            Ok(self.roles.get(name))
+        fn get_role(&self, name: &str) -> Result<Option<Role>, IdentityError> {
+            Ok(self.roles.get(name).cloned())
         }
 
-        fn get_policy(&self, name: &str) -> Result<Option<&Policy>, IdentityError> {
-            Ok(self.policies.get(name))
+        fn get_policy(&self, name: &str) -> Result<Option<Policy>, IdentityError> {
+            Ok(self.policies.get(name).cloned())
         }
     }
 }
