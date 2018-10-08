@@ -526,7 +526,6 @@ impl BlockPublisher {
             identity_signer,
             data_dir,
             config_dir,
-            batch_observers,
             batch_injector_factory,
             exit: Arc::new(Exit::new()),
         };
