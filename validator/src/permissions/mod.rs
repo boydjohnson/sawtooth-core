@@ -24,11 +24,13 @@ use proto::identity::Policy_Entry;
 use proto::identity::Policy_EntryType;
 use proto::identity::Role as ProtoRole;
 
+#[derive(Clone)]
 pub enum Permission {
     PermitKey(String),
     DenyKey(String),
 }
 
+#[derive(Clone)]
 pub struct Policy {
     name: String,
     permissions: Vec<Permission>,
@@ -47,6 +49,7 @@ impl Policy {
     }
 }
 
+#[derive(Clone)]
 pub struct Role {
     name: String,
     policy_name: String,
