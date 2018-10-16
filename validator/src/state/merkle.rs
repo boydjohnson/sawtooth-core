@@ -509,8 +509,11 @@ impl Iterator for MerkleLeafIterator {
 
         loop {
             if let Some((path, node)) = self.visited.pop_front() {
-                if node.value.is_some() {
-                    return Some(Ok((path, cbor_decode(node.value.unwrap()).expect("Foo"))));
+                if let Some(val) = node.value {
+                    return match cbor_decode(val) {
+                        Ok(v) => Some(Ok((path, v))),
+                        Err(err) => Some(Err(StateDatabaseError::from(err))),
+                    };
                 }
 
                 // Reverse the list, such that we have an in-order traversal of the
