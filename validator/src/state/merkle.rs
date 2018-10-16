@@ -22,8 +22,8 @@ use std::collections::VecDeque;
 use std::io::Cursor;
 
 use cbor;
-use cbor::decoder::GenericDecoder;
-use cbor::encoder::GenericEncoder;
+use cbor::decoder::{Decoder, GenericDecoder};
+use cbor::encoder::{Encoder, GenericEncoder};
 use cbor::value::Bytes;
 use cbor::value::Key;
 use cbor::value::Text;
@@ -60,6 +60,18 @@ pub struct MerkleDatabase {
     root_hash: String,
     db: LmdbDatabase,
     root_node: Node,
+}
+
+fn cbor_encode(data: Vec<u8>) -> Result<Vec<u8>, cbor::EncodeError> {
+    let mut encoder = Encoder::new(Cursor::new(vec![]));
+    encoder.bytes(&data)?;
+    Ok(encoder.into_writer().into_inner())
+}
+
+fn cbor_decode(data: Vec<u8>) -> Result<Vec<u8>, cbor::DecodeError> {
+    let input = Cursor::new(data);
+    let mut decoder = Decoder::new(cbor::Config::default(), input);
+    Ok(decoder.bytes()?)
 }
 
 impl MerkleDatabase {
@@ -195,7 +207,7 @@ impl MerkleDatabase {
     /// result of this function, will not retrieve the results provided here.
     pub fn set(&self, address: &str, data: &[u8]) -> Result<String, StateDatabaseError> {
         let mut updates = HashMap::with_capacity(1);
-        updates.insert(address.to_string(), data.to_vec());
+        updates.insert(address.to_string(), cbor_encode(data.to_vec())?);
         self.update(&updates, &[], false)
     }
 
@@ -236,7 +248,7 @@ impl MerkleDatabase {
                 let node = set_path_map
                     .get_mut(set_address)
                     .expect("Path map not correctly generated");
-                node.value = Some(set_value.to_vec());
+                node.value = Some(cbor_encode(set_value.to_vec())?);
             }
             path_map.extend(set_path_map);
         }
@@ -457,7 +469,10 @@ impl StateReader for MerkleDatabase {
     /// not, returns None.  Will return an StateDatabaseError::NotFound, if the
     /// given address is not in the tree
     fn get(&self, address: &str) -> Result<Option<Vec<u8>>, StateDatabaseError> {
-        Ok(self.get_by_address(address)?.value)
+        match self.get_by_address(address)?.value {
+            Some(data) => Ok(Some(cbor_decode(data)?)),
+            None => Ok(None),
+        }
     }
 
     fn leaves(&self, prefix: Option<&str>) -> Result<Box<StateIter>, StateDatabaseError> {
@@ -495,7 +510,7 @@ impl Iterator for MerkleLeafIterator {
         loop {
             if let Some((path, node)) = self.visited.pop_front() {
                 if node.value.is_some() {
-                    return Some(Ok((path, node.value.unwrap())));
+                    return Some(Ok((path, cbor_decode(node.value.unwrap()).expect("Foo"))));
                 }
 
                 // Reverse the list, such that we have an in-order traversal of the
