@@ -16,21 +16,11 @@
 import ctypes
 from enum import IntEnum
 
-import cbor
-
 from sawtooth_validator import ffi
 
 
 # This is included for legacy reasons.
 INIT_ROOT_KEY = ''
-
-
-def _decode(encoded):
-    return cbor.loads(encoded)
-
-
-def _encode(value):
-    return cbor.dumps(value, sort_keys=True)
 
 
 class MerkleDatabase(ffi.OwnedPointer):
@@ -110,8 +100,8 @@ class MerkleDatabase(ffi.OwnedPointer):
             ctypes.byref(vec_len),
             ctypes.byref(vec_cap))
 
-        return _decode(ffi.from_rust_vec(
-            vec_ptr, vec_len, vec_cap))
+        return ffi.from_rust_vec(
+            vec_ptr, vec_len, vec_cap)
 
     def __setitem__(self, address, value):
         return self.set(address, value)
@@ -121,13 +111,12 @@ class MerkleDatabase(ffi.OwnedPointer):
 
         (string_ptr, string_len, string_cap) = ffi.prepare_string_result()
 
-        data = _encode(value)
         _libexec(
             'merkle_db_set',
             self.pointer,
             c_address,
-            data,
-            len(data),
+            value,
+            len(value),
             ctypes.byref(string_ptr),
             ctypes.byref(string_len),
             ctypes.byref(string_cap))
@@ -164,7 +153,7 @@ class MerkleDatabase(ffi.OwnedPointer):
         """
         c_set_items = (ctypes.POINTER(_Entry) * len(set_items))()
         for (i, (key, value)) in enumerate(set_items.items()):
-            c_set_items[i] = ctypes.pointer(_Entry.new(key, _encode(value)))
+            c_set_items[i] = ctypes.pointer(_Entry.new(key, value))
 
         if delete_items is None:
             delete_items = []
@@ -274,7 +263,7 @@ class _LeafIterator:
 
         address = ffi.from_rust_string(
             string_ptr, string_len, string_cap).decode()
-        value = _decode(ffi.from_rust_vec(vec_ptr, vec_len, vec_cap))
+        value = ffi.from_rust_vec(vec_ptr, vec_len, vec_cap)
 
         return (address, value)
 
