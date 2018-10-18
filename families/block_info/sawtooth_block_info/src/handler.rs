@@ -19,8 +19,12 @@ use block_info::{BlockInfo, BlockInfoConfig, BlockInfoTxn};
 use hex;
 use protobuf;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use addressing::{NAMESPACE, get_config_addr, create_block_address};
+use state::*;
+use payload::BlockInfoPayload;
+
 
 cfg_if! {
     if #[cfg(target_arch = "wasm32")] {
@@ -37,7 +41,6 @@ cfg_if! {
     }
 }
 
-const NAMESPACE: &str = "00b10c";
 const DEFAULT_SYNC_TOLERANCE: u64 = 60 * 5;
 const DEFAULT_TARGET_COUNT: u64 = 256;
 
@@ -72,14 +75,6 @@ fn validate_timestamp(timestamp: u64, tolerance: u64) -> Result<(), ApplyError> 
     Ok(())
 }
 
-fn get_config_addr() -> String {
-    format!("{}01{}", NAMESPACE, "0".repeat(62))
-}
-
-fn create_block_address(block_num: u64) -> String {
-    format!("{}00{:062x}", NAMESPACE, block_num)
-}
-
 pub struct BlockInfoTransactionHandler {
     family_name: String,
     family_versions: Vec<String>,
@@ -94,71 +89,24 @@ impl BlockInfoTransactionHandler {
             namespaces: vec![NAMESPACE.to_string()],
         }
     }
-}
 
-impl TransactionHandler for BlockInfoTransactionHandler {
-    fn family_name(&self) -> String {
-        self.family_name.clone()
-    }
-
-    fn family_versions(&self) -> Vec<String> {
-        self.family_versions.clone()
-    }
-
-    fn namespaces(&self) -> Vec<String> {
-        self.namespaces.clone()
-    }
-
-    fn apply(
+    pub fn insert_block(
         &self,
-        request: &TpProcessRequest,
-        context: &mut TransactionContext,
+        payload: &BlockInfoTxn,
+        mut state: BlockInfoState,
+        signer_public_key: &str,
     ) -> Result<(), ApplyError> {
-        // Unpack payload
-        let txn: BlockInfoTxn = parse_protobuf(request.get_payload())?;
-        let next_block = txn.get_block();
-        let target_count = txn.get_target_count();
-        let sync_tolerance = txn.get_sync_tolerance();
 
-        // Validate block info fields
-        if next_block.get_block_num() < 0 {
-            return Err(ApplyError::InvalidTransaction(format!(
-                "Invalid block num: {}",
-                next_block.get_block_num()
-            )));
-        }
+        let state = state.get_state();
+        let mut new_config = BlockInfoConfig::new();
 
-        if !(validate_hex(next_block.get_previous_block_id(), 128)
-            || next_block.get_previous_block_id() == "0000000000000000")
-        {
-            return Err(ApplyError::InvalidTransaction(format!(
-                "Invalid previous block id '{}'",
-                next_block.get_previous_block_id()
-            )));
-        }
-        if !validate_hex(next_block.get_signer_public_key(), 66) {
-            return Err(ApplyError::InvalidTransaction(format!(
-                "Invalid signer public_key '{}'",
-                next_block.get_signer_public_key()
-            )));
-        }
-        if !validate_hex(next_block.get_header_signature(), 128) {
-            return Err(ApplyError::InvalidTransaction(format!(
-                "Invalid header signature '{}'",
-                next_block.get_header_signature()
-            )));
-        }
-
-        if next_block.get_timestamp() <= 0 {
-            return Err(ApplyError::InvalidTransaction(format!(
-                "Invalid timestamp '{}'",
-                next_block.get_timestamp()
-            )));
-        }
+        let next_block = payload.get_block();
+        let target_count = payload.get_target_count();
+        let sync_tolerance = payload.get_sync_tolerance();
 
         // Get config and previous block (according to the block info in the
         // transaction) from state
-        let entries = context.get_state(vec![get_config_addr()]);
+        let entries = state.get_state();
         let mut config = BlockInfoConfig::new();
 
         // If there is no config in state, we don't know anything about what's
@@ -187,7 +135,7 @@ impl TransactionHandler for BlockInfoTransactionHandler {
                 validate_timestamp(next_block.get_timestamp(), config.get_sync_tolerance())?;
 
                 let mut block_entries =
-                    context.get_state(vec![create_block_address(config.get_latest_block())])?;
+                    state.get_state_at_block(config.get_latest_block());
 
                 let prev_block: BlockInfo = match block_entries {
                     None => {
@@ -278,14 +226,43 @@ impl TransactionHandler for BlockInfoTransactionHandler {
         };
 
         if !deletes.is_empty() {
-            context.delete_state(deletes.to_vec())?;
+            state.delete_state(deletes.to_vec())?;
         }
 
         if !sets.is_empty() {
-            context.set_state(sets)?;
+            state.set_state(sets)?;
         }
 
         Ok(())
+    }
+
+}
+
+impl TransactionHandler for BlockInfoTransactionHandler {
+    fn family_name(&self) -> String {
+        self.family_name.clone()
+    }
+
+    fn family_versions(&self) -> Vec<String> {
+        self.family_versions.clone()
+    }
+
+    fn namespaces(&self) -> Vec<String> {
+        self.namespaces.clone()
+    }
+
+    fn apply(
+        &self,
+        request: &TpProcessRequest,
+        context: &mut TransactionContext,
+    ) -> Result<(), ApplyError> {
+        let header = request.get_header();
+        let signer_public_key = header.get_signer_public_key();
+
+        let payload = BlockInfoPayload::new(request.get_payload())?;
+        let state = BlockInfoState::new(context);
+
+        self.insert_block(&payload, state, signer_public_key)
     }
 }
 

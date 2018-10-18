@@ -44,6 +44,9 @@ cfg_if! {
 
 mod block_info;
 pub mod handler;
+pub mod addressing;
+pub mod payload;
+pub mod state;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
