@@ -20,7 +20,7 @@ cfg_if! {
     if #[cfg(target_arch = "wasm32")] {
         use sabre_sdk::ApplyError;
     } else {
-        use sawtooth_sdk::processor::ApplyError;
+        use sawtooth_sdk::processor::handler::ApplyError;
     }
 }
 
@@ -47,7 +47,7 @@ fn validate_timestamp(timestamp: u64, tolerance: u64) -> Result<(), ApplyError> 
 }
 
 pub struct BlockInfoPayload {
-    BlockInfoTransaction: BlockInfoTxn,
+    pub block_info_txn: BlockInfoTxn,
 }
 
 impl BlockInfoPayload {
@@ -93,7 +93,9 @@ impl BlockInfoPayload {
             )));
         }
 
-        Ok(payload)
+        Ok(BlockInfoPayload {
+            block_info_txn: payload,
+        })
     }
 }
 
