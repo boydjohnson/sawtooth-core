@@ -14,7 +14,7 @@
  * limitations under the License.
  * ------------------------------------------------------------------------------
  */
- use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 cfg_if! {
     if #[cfg(target_arch = "wasm32")] {
@@ -25,8 +25,7 @@ cfg_if! {
 }
 
 use protobuf;
-use protos::BlockInfoTxn;
-
+use protos::block_info::BlockInfoTxn;
 
 fn validate_hex(string: &str, length: usize) -> bool {
     hex::decode(string).is_ok() && string.len() == length

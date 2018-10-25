@@ -15,16 +15,15 @@
  * ------------------------------------------------------------------------------
  */
 
-use block_info::{BlockInfo, BlockInfoConfig, BlockInfoTxn};
 use hex;
 use protobuf;
+use protos::block_info::{BlockInfo, BlockInfoConfig, BlockInfoTxn};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use addressing::{NAMESPACE, get_config_addr, create_block_address};
-use state::*;
+use addressing::{create_block_address, get_config_addr, NAMESPACE};
 use payload::BlockInfoPayload;
-
+use state::*;
 
 cfg_if! {
     if #[cfg(target_arch = "wasm32")] {
@@ -96,7 +95,6 @@ impl BlockInfoTransactionHandler {
         mut state: BlockInfoState,
         signer_public_key: &str,
     ) -> Result<(), ApplyError> {
-
         let state = state.get_state();
         let mut new_config = BlockInfoConfig::new();
 
@@ -134,8 +132,7 @@ impl BlockInfoTransactionHandler {
 
                 validate_timestamp(next_block.get_timestamp(), config.get_sync_tolerance())?;
 
-                let mut block_entries =
-                    state.get_state_at_block(config.get_latest_block());
+                let mut block_entries = state.get_state_at_block(config.get_latest_block());
 
                 let prev_block: BlockInfo = match block_entries {
                     None => {
@@ -235,7 +232,6 @@ impl BlockInfoTransactionHandler {
 
         Ok(())
     }
-
 }
 
 impl TransactionHandler for BlockInfoTransactionHandler {

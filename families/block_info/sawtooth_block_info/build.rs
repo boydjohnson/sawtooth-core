@@ -19,22 +19,53 @@ extern crate glob;
 extern crate protoc_rust;
 
 use protoc_rust::Customize;
+use std::env;
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+
+const PROTO_DIR_NAME: &str = "protos";
 
 fn main() {
+    let out_dir = env::var("OUT_DIR").expect("No OUT_DIR env variable");
+    let dest_path = Path::new(&out_dir).join(PROTO_DIR_NAME);
+
     let proto_src_files = glob_simple("../protos/*.proto");
     println!("{:?}", proto_src_files);
 
+    fs::create_dir_all(&dest_path).expect("Unable to create protobuf out dir");
+    let mod_file_content = proto_src_files
+        .iter()
+        .map(|proto_file| {
+            let proto_path = Path::new(proto_file);
+            format!(
+                "pub mod {};",
+                proto_path
+                    .file_stem()
+                    .expect("Unable to extract stem")
+                    .to_str()
+                    .expect("Unable to extract filename")
+            )
+        }).collect::<Vec<_>>()
+        .join("\n");
+    let mut mod_file = fs::File::create(dest_path.join("mod.rs")).unwrap();
+    mod_file
+        .write_all(mod_file_content.as_bytes())
+        .expect("Unable to write mod file");
+
     protoc_rust::run(protoc_rust::Args {
-        out_dir: "./src",
+        out_dir: &dest_path
+            .to_str()
+            .expect("Unable to create 'dest_path' as str"),
         input: &proto_src_files
             .iter()
             .map(|a| a.as_ref())
             .collect::<Vec<&str>>(),
-        includes: &["../protos"],
+        includes: &["../protos", "../../../protos"],
         customize: Customize {
             ..Default::default()
         },
-    }).expect("Error generating rust files from identity protos");
+    }).expect("Error generating rust files from settings protos");
 }
 
 fn glob_simple(pattern: &str) -> Vec<String> {
@@ -46,6 +77,5 @@ fn glob_simple(pattern: &str) -> Vec<String> {
                 .to_str()
                 .expect("utf-8")
                 .to_owned()
-        })
-        .collect()
+        }).collect()
 }
