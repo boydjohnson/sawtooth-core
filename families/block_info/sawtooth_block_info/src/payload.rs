@@ -16,7 +16,6 @@
  */
 
 use state::BlockInfo;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 cfg_if! {
     if #[cfg(target_arch = "wasm32")] {
@@ -33,21 +32,6 @@ fn validate_hex(string: &str, length: usize) -> bool {
     hex::decode(string).is_ok() && string.len() == length
 }
 
-fn validate_timestamp(timestamp: u64, tolerance: u64) -> Result<(), ApplyError> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("System time is before Unix epoch.")
-        .as_secs();
-    if timestamp < (now - tolerance) || (now + tolerance) < timestamp {
-        return Err(ApplyError::InvalidTransaction(format!(
-            "Timestamp must be less than local time. Expected {0} in ({1}-{2}, {1}+{2})",
-            timestamp, now, tolerance
-        )));
-    }
-
-    Ok(())
-}
-
 pub struct BlockInfoPayload {
     pub block: BlockInfo,
     pub target_count: u64,
@@ -60,8 +44,6 @@ impl BlockInfoPayload {
 
         {
             let next_block = payload.get_block();
-            let target_count = payload.get_target_count();
-            let sync_tolerance = payload.get_sync_tolerance();
 
             if next_block.get_block_num() < 0 {
                 return Err(ApplyError::InvalidTransaction(format!(

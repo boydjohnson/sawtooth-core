@@ -15,8 +15,6 @@
  * ------------------------------------------------------------------------------
  */
 
-use hex;
-use protobuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use addressing::NAMESPACE;
@@ -36,22 +34,6 @@ cfg_if! {
         use sawtooth_sdk::processor::handler::TransactionContext;
         use sawtooth_sdk::processor::handler::TransactionHandler;
     }
-}
-
-fn parse_protobuf<M: protobuf::Message>(bytes: &[u8]) -> Result<M, ApplyError> {
-    protobuf::parse_from_bytes(bytes).map_err(|err| {
-        ApplyError::InvalidTransaction(format!("Failed to serialize protobuf: {:?}", err))
-    })
-}
-
-fn serialize_protobuf<M: protobuf::Message>(message: &M) -> Result<Vec<u8>, ApplyError> {
-    protobuf::Message::write_to_bytes(message).map_err(|err| {
-        ApplyError::InvalidTransaction(format!("Failed to serialize protobuf: {:?}", err))
-    })
-}
-
-fn validate_hex(string: &str, length: usize) -> bool {
-    hex::decode(string).is_ok() && string.len() == length
 }
 
 fn validate_timestamp(timestamp: u64, tolerance: u64) -> Result<(), ApplyError> {
@@ -88,7 +70,6 @@ impl BlockInfoTransactionHandler {
         &self,
         payload: BlockInfoPayload,
         state: &mut BlockInfoState,
-        signer_public_key: &str,
     ) -> Result<(), ApplyError> {
         if let Some(config) = Self::mutate_config_if_exists(&payload, state)? {
             validate_timestamp(payload.block.timestamp, config.sync_tolerance)?;
@@ -199,13 +180,10 @@ impl TransactionHandler for BlockInfoTransactionHandler {
         request: &TpProcessRequest,
         context: &mut TransactionContext,
     ) -> Result<(), ApplyError> {
-        let header = request.get_header();
-        let signer_public_key = header.get_signer_public_key();
-
         let payload = BlockInfoPayload::new(request.get_payload())?;
         let mut state = BlockInfoState::new(context);
 
-        self.execute_block_info_transaction(payload, &mut state, signer_public_key)
+        self.execute_block_info_transaction(payload, &mut state)
     }
 }
 
