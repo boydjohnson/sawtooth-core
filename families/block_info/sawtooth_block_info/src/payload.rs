@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Bitwise IO
+ * Copyright 2018 Bitwise IO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,6 +14,8 @@
  * limitations under the License.
  * ------------------------------------------------------------------------------
  */
+
+use state::BlockInfo;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 cfg_if! {
@@ -47,55 +49,57 @@ fn validate_timestamp(timestamp: u64, tolerance: u64) -> Result<(), ApplyError> 
 }
 
 pub struct BlockInfoPayload {
-    pub block_info_txn: BlockInfoTxn,
+    pub block: BlockInfo,
+    pub target_count: u64,
+    pub sync_tolerance: u64,
 }
 
 impl BlockInfoPayload {
     pub fn new(payload_data: &[u8]) -> Result<BlockInfoPayload, ApplyError> {
         let payload: BlockInfoTxn = parse_protobuf(&payload_data)?;
 
-        let next_block = payload.get_block();
-        let target_count = payload.get_target_count();
-        let sync_tolerance = payload.get_sync_tolerance();
-
-        if next_block.get_block_num() < 0 {
-            return Err(ApplyError::InvalidTransaction(format!(
-                "Invalid block num: {}",
-                next_block.get_block_num()
-            )));
-        }
-
-        if !(validate_hex(next_block.get_previous_block_id(), 128)
-            || next_block.get_previous_block_id() == "0000000000000000")
         {
-            return Err(ApplyError::InvalidTransaction(format!(
-                "Invalid previous block id '{}'",
-                next_block.get_previous_block_id()
-            )));
-        }
-        if !validate_hex(next_block.get_signer_public_key(), 66) {
-            return Err(ApplyError::InvalidTransaction(format!(
-                "Invalid signer public_key '{}'",
-                next_block.get_signer_public_key()
-            )));
-        }
-        if !validate_hex(next_block.get_header_signature(), 128) {
-            return Err(ApplyError::InvalidTransaction(format!(
-                "Invalid header signature '{}'",
-                next_block.get_header_signature()
-            )));
+            let next_block = payload.get_block();
+            let target_count = payload.get_target_count();
+            let sync_tolerance = payload.get_sync_tolerance();
+
+            if next_block.get_block_num() < 0 {
+                return Err(ApplyError::InvalidTransaction(format!(
+                    "Invalid block num: {}",
+                    next_block.get_block_num()
+                )));
+            }
+
+            if !(validate_hex(next_block.get_previous_block_id(), 128)
+                || next_block.get_previous_block_id() == "0000000000000000")
+            {
+                return Err(ApplyError::InvalidTransaction(format!(
+                    "Invalid previous block id '{}'",
+                    next_block.get_previous_block_id()
+                )));
+            }
+            if !validate_hex(next_block.get_signer_public_key(), 66) {
+                return Err(ApplyError::InvalidTransaction(format!(
+                    "Invalid signer public_key '{}'",
+                    next_block.get_signer_public_key()
+                )));
+            }
+            if !validate_hex(next_block.get_header_signature(), 128) {
+                return Err(ApplyError::InvalidTransaction(format!(
+                    "Invalid header signature '{}'",
+                    next_block.get_header_signature()
+                )));
+            }
+
+            if next_block.get_timestamp() <= 0 {
+                return Err(ApplyError::InvalidTransaction(format!(
+                    "Invalid timestamp '{}'",
+                    next_block.get_timestamp()
+                )));
+            }
         }
 
-        if next_block.get_timestamp() <= 0 {
-            return Err(ApplyError::InvalidTransaction(format!(
-                "Invalid timestamp '{}'",
-                next_block.get_timestamp()
-            )));
-        }
-
-        Ok(BlockInfoPayload {
-            block_info_txn: payload,
-        })
+        Ok(payload.into())
     }
 }
 
@@ -103,4 +107,14 @@ fn parse_protobuf<M: protobuf::Message>(bytes: &[u8]) -> Result<M, ApplyError> {
     protobuf::parse_from_bytes(bytes).map_err(|err| {
         ApplyError::InvalidTransaction(format!("Failed to serialize protobuf: {:?}", err))
     })
+}
+
+impl From<BlockInfoTxn> for BlockInfoPayload {
+    fn from(other: BlockInfoTxn) -> BlockInfoPayload {
+        BlockInfoPayload {
+            block: other.get_block().into(),
+            target_count: other.get_target_count(),
+            sync_tolerance: other.get_sync_tolerance(),
+        }
+    }
 }
