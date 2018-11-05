@@ -76,7 +76,8 @@ impl<'a> BlockInfoState<'a> {
                 ::protobuf::parse_from_bytes::<protos::block_info::BlockInfoConfig>(d)
                     .map_err(|_| {
                         ApplyError::InternalError("Failed to deserialize BlockInfoConfig".into())
-                    })?.into(),
+                    })?
+                    .into(),
             )),
             None => Ok(None),
         }
@@ -114,11 +115,6 @@ impl<'a> BlockInfoState<'a> {
         config: Config,
         block: BlockInfo,
     ) -> Result<(), ApplyError> {
-        debug!(
-            "oldest block {}, block num {}, target count {}",
-            config.oldest_block, block.block_num, config.target_count
-        );
-
         let mut deletes = vec![];
         let mut possible_oldest_block = config.oldest_block;
 
@@ -127,13 +123,16 @@ impl<'a> BlockInfoState<'a> {
             possible_oldest_block += 1;
         }
 
-        let num_deletes = deletes.len();
         let oldest_block = config.oldest_block;
 
         let mut config_proto: protos::block_info::BlockInfoConfig = config.into();
         if possible_oldest_block > oldest_block {
             config_proto.set_oldest_block(possible_oldest_block);
         }
+
+        config_proto.set_latest_block(block.block_num);
+
+        let num_deletes = deletes.len();
 
         if num_deletes > 0 {
             if let Some(actually_deleted) = self.context.delete_state(deletes)? {

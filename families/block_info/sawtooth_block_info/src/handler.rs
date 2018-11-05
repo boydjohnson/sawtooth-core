@@ -101,7 +101,6 @@ impl BlockInfoTransactionHandler {
                     "Config and state out of sync. Latest block not found in state.".into(),
                 ));
             }
-
             state.set_config_and_block(config, payload.block)?;
         } else {
             let sync_tolerance = if payload.sync_tolerance != 0 {
