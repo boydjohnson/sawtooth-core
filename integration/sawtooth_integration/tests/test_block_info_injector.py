@@ -20,10 +20,10 @@ import urllib.request
 import urllib.error
 import base64
 
-from sawtooth_block_info.common import CONFIG_ADDRESS
-from sawtooth_block_info.common import create_block_address
-from sawtooth_block_info.protobuf.block_info_pb2 import BlockInfoConfig
-from sawtooth_block_info.protobuf.block_info_pb2 import BlockInfo
+from sawtooth_block_info_injector.common import CONFIG_ADDRESS
+from sawtooth_block_info_injector.common import create_block_address
+from sawtooth_block_info_injector.protobuf.block_info_pb2 import BlockInfoConfig
+from sawtooth_block_info_injector.protobuf.block_info_pb2 import BlockInfo
 
 from sawtooth_intkey.intkey_message_factory import IntkeyMessageFactory
 from sawtooth_integration.tests.integration_tools import wait_for_rest_apis
