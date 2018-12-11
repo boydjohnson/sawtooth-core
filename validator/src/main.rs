@@ -17,7 +17,7 @@ fn main() {
 
     let args = cli::parse_args();
 
-    let verbosity: u64 = args.occurrences_of("verbose");
+    let verbosity: i32 = args.occurrences_of("verbose") as i32;
 
     pylogger::set_up_logger(verbosity, py);
 

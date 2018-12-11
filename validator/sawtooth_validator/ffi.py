@@ -62,9 +62,7 @@ class Library:
 
 
 LIBRARY = Library(ctypes.CDLL)
-LIBRARY.call("pylogger_init", LOGGER.getEffectiveLevel())
 PY_LIBRARY = Library(ctypes.PyDLL)
-
 
 def prepare_string_result():
     """Returns pair of byte pointer and size value for use as return parameters

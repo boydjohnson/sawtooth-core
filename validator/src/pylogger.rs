@@ -22,7 +22,7 @@ use cpython::{
 use log;
 use log::{Level, Log, Metadata, Record, SetLoggerError};
 
-pub fn set_up_logger(verbosity: u64, py: Python) {
+pub fn set_up_logger(verbosity: i32, py: Python) {
     let verbosity_level: Level = determine_log_level(verbosity);
 
     PyLogger::init(verbosity_level, py).expect("Failed to set logger");
@@ -40,14 +40,6 @@ pub fn set_up_logger(verbosity: u64, py: Python) {
     warn!("Started logger at level {}", verbosity_level);
 }
 
-#[no_mangle]
-pub extern "C" fn pylogger_init(verbosity: usize) {
-    let gil = Python::acquire_gil();
-    let py = gil.python();
-    PyLogger::init(determine_log_level(verbosity as u64), py)
-        .expect("Failed to initialize PyLogger");
-}
-
 pub fn exception(py: Python, msg: &str, err: PyErr) {
     let logger = PyLogger::new(py).expect("Failed to create new PyLogger");
     logger.exception(py, msg, err);
@@ -61,14 +53,21 @@ struct PyLogger {
 impl PyLogger {
     fn new(py: Python) -> PyResult<Self> {
         let logging = py.import("logging")?;
-        let logger = logging.call(py, "getLogger", PyTuple::new(py, &[]), None)?;
+        let logger = logging.call(py, "getLogger", cpython::NoArgs, None)?;
         Ok(PyLogger { logger, logging })
     }
 
     fn init(verbosity: Level, py: Python) -> Result<(), SetLoggerError> {
-        let logger = PyLogger::new(py).unwrap();
+        let logger = PyLogger::new(py)
+            .map_err(|err| {
+                eprintln!("{:?}", err);
+                err
+            }).expect("Was able to import logging");
 
-        log::set_boxed_logger(Box::new(logger))?;
+        log::set_boxed_logger(Box::new(logger)).map_err(|err| {
+            eprintln!("{:?}", err.to_string());
+            err
+        })?;
 
         log::set_max_level(verbosity.to_level_filter());
 
@@ -89,7 +88,7 @@ impl PyLogger {
     }
 }
 
-fn determine_log_level(verbosity: u64) -> Level {
+fn determine_log_level(verbosity: i32) -> Level {
     match verbosity {
         0 => Level::Warn,
         1 => Level::Info,
